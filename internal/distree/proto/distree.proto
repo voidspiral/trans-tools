@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+package distree;
+
+option go_package = "trans-tools/internal/distree/proto";
+
+// DistTree 是面向超算集群依赖分发的树形传输服务。
+// 每次 PutStream 调用对应一个文件的完整推送（一轮）；
+// 多文件时客户端依次发起多轮调用（多轮对话语义）。
+service DistTree {
+  // PutStream: 客户端流式发送文件块，服务端流式回传各节点的执行结果。
+  rpc PutStream(stream PutStreamReq) returns (stream PutStreamReply);
+}
+
+// PutStreamReq 是每次发送的消息，首条包含元数据和首块 body，
+// 后续条目只需携带 body（其余字段留空即可，服务端以首条元数据为准）。
+message PutStreamReq {
+  // 文件名（basename）
+  string name = 1;
+  // 当前 body 块的 MD5，用于逐块校验
+  string md5 = 2;
+  // 目标目录（远端落盘路径，服务端将文件保存为 dest_dir/name）
+  string dest_dir = 3;
+  // 文件内容块
+  bytes body = 4;
+  // 下一跳及后续节点列表（逗号或 nodeset 表达式，如 "cn2,cn3" 或 "cn[2-3]"）
+  // 服务端收到后按 width 分组建立下游流，并将各子集继续下传
+  string nodelist = 5;
+  // 下游 agent 监听端口（默认值；若环境变量 TRANS_TOOLS_NODE_PORTS 中有对应节点则以环境变量为准）
+  string port = 6;
+  // 树宽：每个中间节点最多向 width 个子节点建立直连流
+  int32 width = 7;
+  // 文件元信息（uid/gid/权限/修改时间），首条有效
+  uint32 uid = 8;
+  uint32 gid = 9;
+  uint32 filemod = 10;
+  int64  modtime = 11;
+  // 来源节点标识（可选，日志追踪用）
+  string source_node = 12;
+}
+
+// PutStreamReply 是服务端（包括下游递归）返回给上游的结果条目。
+// 客户端可收到多条 Reply，每条对应一个节点或一批节点。
+message PutStreamReply {
+  bool   ok       = 1;
+  // 该条回复对应的节点列表（可为单节点或 nodeset 表达式）
+  string nodelist = 2;
+  string message  = 3;
+}
