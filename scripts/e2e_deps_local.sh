@@ -66,8 +66,8 @@ trap cleanup EXIT
 
 sleep 2
 
-# 节点列表使用 host:port 格式，端口信息随协议流转
-NODES_WITH_PORTS="cn1:${PORT_CN1},cn2:${PORT_CN2},cn3:${PORT_CN3}"
+# 单机测试使用 localhost，端口区分不同 agent 实例
+NODES_WITH_PORTS="localhost:${PORT_CN1},localhost:${PORT_CN2},localhost:${PORT_CN3}"
 
 echo
 echo "== 运行 deps 分发命令（节点列表: ${NODES_WITH_PORTS}） =="

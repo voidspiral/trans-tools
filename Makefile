@@ -3,16 +3,26 @@ VERSION ?= 0.1.0
 BUILD_TIME := $(shell date -u '+%Y-%m-%d_%H:%M:%S')
 GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 
+GO ?= go
+# Force module mode (avoid GOPATH mode) and prefer vendored deps for offline builds.
+GOENV ?= GO111MODULE=on
+GOMOD ?= -mod=vendor
+
 LDFLAGS = -ldflags "\
 	-X trans-tools/internal/version.Version=$(VERSION) \
 	-X trans-tools/internal/version.BuildTime=$(BUILD_TIME) \
 	-X trans-tools/internal/version.GitCommit=$(GIT_COMMIT) \
 	-s -w"
 
-.PHONY: build run clean test fmt lint help
+.PHONY: build build-agent build-all run clean test fmt lint vendor help
 
 build:
-	go build $(LDFLAGS) -o bin/$(BINARY_NAME) ./cmd/trans-tools
+	$(GOENV) $(GO) build $(GOMOD) $(LDFLAGS) -o bin/$(BINARY_NAME) ./cmd/trans-tools
+
+build-agent:
+	$(GOENV) $(GO) build $(GOMOD) $(LDFLAGS) -o bin/agent ./cmd/agent
+
+build-all: build build-agent
 
 run: build
 	./bin/$(BINARY_NAME)
@@ -21,19 +31,26 @@ clean:
 	rm -rf bin/
 
 test:
-	go test ./...
+	$(GOENV) $(GO) test $(GOMOD) ./...
 
 fmt:
-	go fmt ./...
+	$(GOENV) $(GO) fmt ./...
 
 lint:
-	golangci-lint run ./... 2>/dev/null || go vet ./...
+	golangci-lint run ./... 2>/dev/null || $(GOENV) $(GO) vet $(GOMOD) ./...
+
+vendor:
+	$(GOENV) $(GO) mod tidy
+	$(GOENV) $(GO) mod vendor
 
 help:
 	@echo "trans-tools Makefile"
-	@echo "  make build   - 编译二进制到 bin/"
-	@echo "  make run     - 编译并运行"
-	@echo "  make test    - 运行测试"
-	@echo "  make fmt     - 格式化代码"
-	@echo "  make clean   - 清理 bin/"
-	@echo "  make help    - 显示此帮助"
+	@echo "  make build       - build client (trans-tools) to bin/"
+	@echo "  make build-agent - build server (agent) to bin/"
+	@echo "  make build-all   - build both client and server"
+	@echo "  make run         - build and run client"
+	@echo "  make test        - run tests"
+	@echo "  make fmt         - format code"
+	@echo "  make vendor      - generate vendor/ (requires network)"
+	@echo "  make clean       - remove bin/"
+	@echo "  make help        - show this help"
