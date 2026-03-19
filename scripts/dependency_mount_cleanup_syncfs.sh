@@ -3,13 +3,13 @@
 #
 # 目标：
 #   - 卸载由 dependency_mount_syncfs.sh 创建的 syncFS 挂载点
-#   - 清理 /tmp/local/syncfs 下的 upper 目录内容（可选地删除整个目录）
+#   - 清理 syncFS upper 目录内容（可选地删除整个目录）
 #
 # 用法：
 #   # 只卸载并清空 upper 内容
 #   sudo ./dependency_mount_cleanup_syncfs.sh
 #
-#   # 卸载并删除 /tmp/local/syncfs 下的所有 upper 目录
+#   # 卸载并删除状态目录下的所有 upper 目录
 #   sudo ./dependency_mount_cleanup_syncfs.sh --remove-dirs
 
 set -euo pipefail
@@ -17,58 +17,72 @@ set -euo pipefail
 REMOVE_DIRS=0
 if [[ "${1:-}" == "--remove-dirs" ]]; then
   REMOVE_DIRS=1
+  shift
 fi
 
 echo "[INFO] 开始清理 syncFS 挂载"
 
-# 步骤1：卸载挂载点为 /vol8/... 或 /tmp/local/syncfs/... 的 syncFS/FUSE 挂载
-# 说明：
-#   - 在不同发行版上，类型可能显示为 'fuse.syncFS'、'fuse' 或其他 FUSE 相关类型；
-#   - 这里通过挂载点前缀进行过滤，避免误卸载无关 FUSE 挂载。
+# 与挂载脚本保持一致：优先从 SLURM/环境变量获取依赖落盘目录，从而定位 .syncfs 状态目录。
+if [[ -n "${SLURM_JOB_ID:-}" ]]; then
+  STORAGE_DIR="${DEPENDENCY_STORAGE_DIR:-/tmp/dependencies}"
+else
+  STORAGE_DIR="${1:-/tmp/dependencies}"
+fi
+BASE_DIR="${SYNCFS_STATE_DIR:-${STORAGE_DIR}/.syncfs}"
 
-echo "[INFO] 卸载 /vol8 下的 syncFS/FUSE 挂载点（不卸载 /vol8 本身）"
-mount | awk '$3 ~ "^/vol8/" {print $3}' | while read -r mp; do
-  mp="${mp%% }"
-  [[ -z "${mp}" || "${mp}" == "/vol8" ]] && continue
-  echo "[INFO] umount -l ${mp}"
-  if umount -l "${mp}" 2>/dev/null; then
-    echo "[INFO] 卸载成功: ${mp}"
+unmount_one() {
+  local mp="$1"
+  [[ -z "${mp}" ]] && return 0
+  if command -v fusermount3 >/dev/null 2>&1; then
+    echo "[INFO] fusermount3 -u ${mp}"
+    fusermount3 -u "${mp}" 2>/dev/null || {
+      echo "[WARN] fusermount3 卸载失败，尝试 umount -l: ${mp}"
+      umount -l "${mp}" 2>/dev/null || true
+    }
   else
-    echo "[WARN] 卸载失败: ${mp}"
+    echo "[INFO] umount -l ${mp}"
+    umount -l "${mp}" 2>/dev/null || true
   fi
-done
+}
 
-echo "[INFO] 卸载 /tmp/local/syncfs 下的挂载点"
-mount | awk '$3 ~ "^/tmp/local/syncfs" {print $3}' | while read -r mp; do
-  [[ -z "${mp}" ]] && continue
-  echo "[INFO] umount -l ${mp}"
-  if umount -l "${mp}" 2>/dev/null; then
-    echo "[INFO] 卸载成功: ${mp}"
-  else
-    echo "[WARN] 卸载失败: ${mp}"
-  fi
-done
-
-# 步骤2：兜底卸载剩余以 syncfs 目录为前缀的 FUSE 挂载（防止残留）
-echo "[INFO] 兜底卸载可能残留的 FUSE 挂载（按挂载点前缀过滤）"
-mount | awk '$3 ~ "^/vol8/" || $3 ~ "^/tmp/local/syncfs"' | while read -r line; do
-  mp="$(echo "${line}" | awk "{print \$3}")"
-  [[ -z "${mp}" ]] && continue
-  echo "[INFO] (兜底) umount -l ${mp}"
-  umount -l "${mp}" 2>/dev/null || true
-done
-
-# 步骤3：清理 upper 内容
-BASE_DIR="/tmp/local/syncfs"
-if [[ -d "${BASE_DIR}" ]]; then
-  echo "[INFO] 清理 ${BASE_DIR} 下的 upper 内容"
-  bash -c 'rm -rf /tmp/local/syncfs/*_upper/*' 2>/dev/null || true
+# 步骤1：按 state 文件精确卸载（只卸载本脚本创建的挂载）
+if [[ ! -d "${BASE_DIR}" ]]; then
+  echo "[INFO] 状态目录不存在: ${BASE_DIR}，无需清理"
+  exit 0
 fi
 
-# 步骤4：按需删除整个 syncfs 目录
+shopt -s nullglob
+state_files=( "${BASE_DIR}"/*.state )
+shopt -u nullglob
+
+echo "[INFO] 卸载 syncFS 挂载点（按 state 文件）"
+for sf in "${state_files[@]}"; do
+  # shellcheck disable=SC1090
+  source "${sf}" 2>/dev/null || true
+  if [[ -n "${DIRECTORY:-}" ]]; then
+    unmount_one "${DIRECTORY}"
+  fi
+done
+
+echo "[INFO] 卸载 lowerdir 别名(bind)挂载点（按 state 文件）"
+for sf in "${state_files[@]}"; do
+  # shellcheck disable=SC1090
+  source "${sf}" 2>/dev/null || true
+  if [[ -n "${LOWER_ALIAS:-}" ]]; then
+    echo "[INFO] umount -l ${LOWER_ALIAS}"
+    umount -l "${LOWER_ALIAS}" 2>/dev/null || true
+  fi
+done
+
+# 步骤2：清理 upper 内容与 state 文件
+echo "[INFO] 清理 ${BASE_DIR} 下的 upper 内容与 state 文件"
+rm -rf "${BASE_DIR}"/*_upper/* 2>/dev/null || true
+rm -f "${BASE_DIR}"/*.state 2>/dev/null || true
+
+# 步骤4：按需删除整个状态目录
 if [[ "${REMOVE_DIRS}" -eq 1 && -d "${BASE_DIR}" ]]; then
   echo "[INFO] 删除 ${BASE_DIR} 下的所有目录"
-  bash -c 'rm -rf /tmp/local/syncfs/*' 2>/dev/null || true
+  rm -rf "${BASE_DIR:?}/"* 2>/dev/null || true
 fi
 
 echo "[INFO] 清理完成（syncFS 模式）"

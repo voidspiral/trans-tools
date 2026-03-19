@@ -46,8 +46,33 @@ if (( ${#tar_files[@]} == 0 )); then
   exit 0
 fi
 
-BASE_DIR="/tmp/local/syncfs"
+# syncFS 的 upperdir/状态目录默认与 Go 分发程序的远端落盘目录保持一致，
+# 这样 server 节点收到 tar 后可直接执行挂载/卸载，不依赖额外目录约定。
+# 可通过 SYNCFS_STATE_DIR 覆盖。
+BASE_DIR="${SYNCFS_STATE_DIR:-${STORAGE_DIR}/.syncfs}"
 mkdir -p "${BASE_DIR}"
+
+unmount_one() {
+  local mp="$1"
+  [[ -z "${mp}" ]] && return 0
+  if command -v fusermount3 >/dev/null 2>&1; then
+    echo "[INFO] fusermount3 -u ${mp}"
+    fusermount3 -u "${mp}" 2>/dev/null || {
+      echo "[WARN] fusermount3 卸载失败，尝试 umount -l: ${mp}"
+      umount -l "${mp}" 2>/dev/null || true
+    }
+  else
+    echo "[INFO] umount -l ${mp}"
+    umount -l "${mp}" 2>/dev/null || true
+  fi
+}
+
+is_syncfs_mounted() {
+  local mp="$1"
+  # 典型 mount 行形态：
+  #   syncFS on /vol8/xxx type fuse.syncFS (rw,...)
+  mount | awk -v m="$mp" '($1=="syncFS" || $5=="fuse.syncFS") && $3==m {found=1} END{exit(found?0:1)}'
+}
 
 for tar_path in "${tar_files[@]}"; do
   tar_name="$(basename "${tar_path}")"
@@ -68,8 +93,27 @@ for tar_path in "${tar_files[@]}"; do
   overlay_name="${directory#/}"
   overlay_name="${overlay_name//\//_}"
 
+  state_file="${BASE_DIR}/${overlay_name}.state"
+  lower_alias="${BASE_DIR}/${overlay_name}_lower"
   upper_dir="${BASE_DIR}/${overlay_name}_upper"
+  mkdir -p "${lower_alias}"
   mkdir -p "${upper_dir}"
+
+  # 若该目录已挂载为 syncFS，先卸载（幂等）
+  if is_syncfs_mounted "${directory}"; then
+    echo "[INFO] 检测到已挂载 syncFS: ${directory}，先卸载"
+    unmount_one "${directory}"
+  fi
+
+  # 为 lowerdir 创建“别名路径”：在挂载覆盖原目录后，syncFS 仍能通过别名访问原始 lower 内容。
+  # 这一步是必须的，否则 mountpoint 覆盖后 lowerdir 会递归指向自己。
+  echo "[INFO] 创建 lowerdir 别名(bind): ${directory} -> ${lower_alias}"
+  if ! mountpoint -q "${lower_alias}"; then
+    if ! mount --bind "${directory}" "${lower_alias}"; then
+      echo "[ERROR] 创建 lowerdir 别名失败: ${lower_alias}"
+      continue
+    fi
+  fi
 
   # 清理旧的 upper 内容（仅目录内容，不删除目录本身）
   echo "[INFO] 清理 upperdir: ${upper_dir}"
@@ -105,16 +149,23 @@ for tar_path in "${tar_files[@]}"; do
   fi
 
   # 使用 syncFS 进行挂载：
-  #   - lowerdir：原始目录（通常是 Lustre 路径，如 /vol8/...）
+  #   - lowerdir：原始目录的别名路径（bind 后的路径，避免递归）
   #   - upperdir：本地缓存目录
-  #   - mountpoint：直接使用原始目录，实现对业务的透明覆盖
-  echo "[INFO] 使用 syncFS 挂载: lowerdir=${directory}, upperdir=${upper_dir}, mountpoint=${directory}"
+  #   - mountpoint：直接覆盖原始目录，实现对业务路径透明
+  echo "[INFO] 使用 syncFS 挂载: lowerdir=${lower_alias}, upperdir=${upper_dir}, mountpoint=${directory}"
 
-  # 直接尝试挂载；若失败且提示已挂载，可以由调用方决定是否先手工卸载再重试。
-  if ! "${SYNCFS_BIN}" -o "lowerdir=${directory},upperdir=${upper_dir}" "${directory}"; then
+  if ! "${SYNCFS_BIN}" -o "lowerdir=${lower_alias},upperdir=${upper_dir}" "${directory}"; then
     echo "[ERROR] syncFS 挂载失败: ${directory}"
     continue
   fi
+
+  # 记录状态，供清理脚本精确卸载（避免误卸载系统其他挂载）
+  cat > "${state_file}" <<EOF
+DIRECTORY=${directory}
+LOWER_ALIAS=${lower_alias}
+UPPER_DIR=${upper_dir}
+TAR_PATH=${tar_path}
+EOF
 
   echo "[INFO] ✓ syncFS 挂载成功: ${directory}"
 done
