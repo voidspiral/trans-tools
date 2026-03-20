@@ -43,8 +43,9 @@ func PackByDir(groups []DirGroup) (*TarPackResult, error) {
 		if len(g.Files) == 0 {
 			continue
 		}
-		// 将目录名中的 / 替换为 z，保持与 Python 实现类似的风格
-		name := strings.ReplaceAll(strings.TrimPrefix(g.Dir, string(filepath.Separator)), string(filepath.Separator), "z")
+		// 将目录名中的所有 / 替换为 z（含开头），与 Python 实现保持一致：
+		// /vol8/test_libs -> zvol8ztest_libs，挂载脚本可通过 ${name//z//} 正确还原原始路径
+		name := strings.ReplaceAll(g.Dir, string(filepath.Separator), "z")
 		if name == "" {
 			name = "root"
 		}
