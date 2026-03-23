@@ -23,6 +23,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LOWER_DIR="/vol8/test_libs"
 STORAGE_DIR="/tmp/dependencies"
 SYNCFS_STATE_DIR="${STORAGE_DIR}/.syncfs"
+# 方案A：挂载点即业务原路径
+MNT_DIR="${LOWER_DIR}"
 MKDEPS_DIR="/tmp/mkdeps"
 
 TAR_NAME="zvol8ztest_libs_so.tar"
@@ -70,7 +72,7 @@ trap cleanup_tmp EXIT
 
 require_root() {
   if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
-    echo "[ERROR] This test must run as root (need FUSE mount + bind)."
+    echo "[ERROR] This test must run as root (need FUSE mount)."
     exit 1
   fi
 }
@@ -93,11 +95,11 @@ require_root
 if [[ "${MODE}" == "3" ]]; then
   echo "[INFO] MODE=3: skip mount and preparation. Only verify."
   echo "[INFO] df -h check (mount visibility)"
-  df -h "${LOWER_DIR}" || df -h
+  df -h "${MNT_DIR}" || df -h
 
   echo "[INFO] Verify mount content..."
-  cat "${LOWER_DIR}/low"
-  cat "${LOWER_DIR}/libfake.so"
+  cat "${MNT_DIR}/low"
+  cat "${MNT_DIR}/libfake.so"
 
   echo "[INFO] OK"
   exit 0
@@ -133,17 +135,17 @@ echo "[INFO] Mount (first run)..."
 sudo -E env SYNCFS_BIN="${SYNCFS_BIN}" bash "${ROOT_DIR}/scripts/dependency_mount_syncfs.sh" "${STORAGE_DIR}"
 
 echo "[INFO] df -h check (mount visibility)"
-df -h "${LOWER_DIR}" || df -h
+df -h "${MNT_DIR}" || df -h
 
 echo "[INFO] Verify mount content..."
-cat "${LOWER_DIR}/low"
-cat "${LOWER_DIR}/libfake.so"
+cat "${MNT_DIR}/low"
+cat "${MNT_DIR}/libfake.so"
 
 if [[ "${MODE}" == "1" ]]; then
   echo "[INFO] Mount again (idempotency test)..."
   sudo -E env SYNCFS_BIN="${SYNCFS_BIN}" bash "${ROOT_DIR}/scripts/dependency_mount_syncfs.sh" "${STORAGE_DIR}"
   echo "[INFO] Verify after remount..."
-  cat "${LOWER_DIR}/libfake.so"
+  cat "${MNT_DIR}/libfake.so"
 
   echo "[INFO] Cleanup (unmount + remove dirs)..."
   sudo -E bash "${ROOT_DIR}/scripts/dependency_mount_cleanup_syncfs.sh" --remove-dirs "${STORAGE_DIR}"

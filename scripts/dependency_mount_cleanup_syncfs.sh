@@ -2,15 +2,13 @@
 # 基于 syncFS 的依赖挂载清理脚本
 #
 # 目标：
-#   - 卸载由 dependency_mount_syncfs.sh 创建的 syncFS 挂载点
-#   - 清理 syncFS upper 目录内容（可选地删除整个目录）
+#   - 卸载由 dependency_mount_syncfs.sh 创建的 syncFS 挂载点（mountpoint = *_mnt）
+#   - 清理 upper 目录内容（可选删除整个 .syncfs 状态目录）
 #
 # 用法：
-#   # 只卸载并清空 upper 内容
 #   sudo ./dependency_mount_cleanup_syncfs.sh
-#
-#   # 卸载并删除状态目录下的所有 upper 目录
 #   sudo ./dependency_mount_cleanup_syncfs.sh --remove-dirs
+#   sudo ./dependency_mount_cleanup_syncfs.sh --remove-dirs /path/to/dependencies
 
 set -euo pipefail
 
@@ -22,7 +20,6 @@ fi
 
 echo "[INFO] 开始清理 syncFS 挂载"
 
-# 与挂载脚本保持一致：优先从 SLURM/环境变量获取依赖落盘目录，从而定位 .syncfs 状态目录。
 if [[ -n "${SLURM_JOB_ID:-}" ]]; then
   STORAGE_DIR="${DEPENDENCY_STORAGE_DIR:-/tmp/dependencies}"
 else
@@ -45,7 +42,6 @@ unmount_one() {
   fi
 }
 
-# 步骤1：按 state 文件精确卸载（只卸载本脚本创建的挂载）
 if [[ ! -d "${BASE_DIR}" ]]; then
   echo "[INFO] 状态目录不存在: ${BASE_DIR}，无需清理"
   exit 0
@@ -59,12 +55,15 @@ echo "[INFO] 卸载 syncFS 挂载点（按 state 文件）"
 for sf in "${state_files[@]}"; do
   # shellcheck disable=SC1090
   source "${sf}" 2>/dev/null || true
-  if [[ -n "${DIRECTORY:-}" ]]; then
+  if [[ -n "${MOUNTPOINT:-}" ]]; then
+    unmount_one "${MOUNTPOINT}"
+  elif [[ -n "${DIRECTORY:-}" ]]; then
+    # 旧版 state：mountpoint 写在 DIRECTORY
     unmount_one "${DIRECTORY}"
   fi
 done
 
-echo "[INFO] 卸载 lowerdir 别名(bind)挂载点（按 state 文件）"
+echo "[INFO] 卸载旧版 lower 别名(bind)（若存在）"
 for sf in "${state_files[@]}"; do
   # shellcheck disable=SC1090
   source "${sf}" 2>/dev/null || true
@@ -74,16 +73,13 @@ for sf in "${state_files[@]}"; do
   fi
 done
 
-# 步骤2：清理 upper 内容与 state 文件
 echo "[INFO] 清理 ${BASE_DIR} 下的 upper 内容与 state 文件"
 rm -rf "${BASE_DIR}"/*_upper/* 2>/dev/null || true
 rm -f "${BASE_DIR}"/*.state 2>/dev/null || true
 
-# 步骤4：按需删除整个状态目录
 if [[ "${REMOVE_DIRS}" -eq 1 && -d "${BASE_DIR}" ]]; then
-  echo "[INFO] 删除 ${BASE_DIR} 下的所有目录"
+  echo "[INFO] 删除 ${BASE_DIR} 下的所有目录（含 *_mnt）"
   rm -rf "${BASE_DIR:?}/"* 2>/dev/null || true
 fi
 
 echo "[INFO] 清理完成（syncFS 模式）"
-
