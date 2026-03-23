@@ -199,32 +199,36 @@ func (s *distTreeServer) initLocalWriter(req *pb.PutStreamReq) (*localWriter, er
 }
 
 // initDownstreams 按 width 拆分下游节点，逐组建立连接。
-// 返回成功建连的下游列表和连接失败节点的 Reply 列表。
+// 当某组的 gateway 连接失败时，只上报该节点失败，然后将剩余节点重组（下一个节点升级为
+// 新 gateway 并继承剩余子列表），继续尝试，直到找到可用 gateway 或本组耗尽。
+// 这样单个节点故障不会导致整条子链静默丢失。
 func (s *distTreeServer) initDownstreams(ctx context.Context, req *pb.PutStreamReq) ([]*downstreamConn, []*pb.PutStreamReply) {
 	if req.Nodelist == "" || req.Width <= 0 {
 		return nil, nil
 	}
-	// Expand 支持 "cn1:port,cn2:port" 和 nodeset 表达式两种格式
 	addrs := nodeutil.Expand(req.Nodelist)
 	groups := nodeutil.SplitByWidth(addrs, int(req.Width))
 
 	var downstreams []*downstreamConn
 	var failReplies []*pb.PutStreamReply
 	for _, group := range groups {
-		if len(group) == 0 {
-			continue
+		remaining := group
+		for len(remaining) > 0 {
+			d, err := newDownstreamConn(ctx, remaining, req.Port, s.cfg.Insecure)
+			if err != nil {
+				// 只报告当前 gateway 失败，剩余节点由下一轮继续接管
+				log.Printf("[distree server] connect to %s failed: %v", remaining[0].Host, err)
+				failReplies = append(failReplies, &pb.PutStreamReply{
+					Ok:       false,
+					Nodelist: nodeutil.Join(remaining[:1]),
+					Message:  err.Error(),
+				})
+				remaining = remaining[1:]
+				continue
+			}
+			downstreams = append(downstreams, d)
+			break
 		}
-		d, err := newDownstreamConn(ctx, group, req.Port, s.cfg.Insecure)
-		if err != nil {
-			log.Printf("[distree server] connect to %s failed: %v", group[0].Host, err)
-			failReplies = append(failReplies, &pb.PutStreamReply{
-				Ok:       false,
-				Nodelist: nodeutil.Join(group),
-				Message:  err.Error(),
-			})
-			continue
-		}
-		downstreams = append(downstreams, d)
 	}
 	return downstreams, failReplies
 }
