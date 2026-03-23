@@ -126,29 +126,6 @@ go build -o bin/agent ./cmd/agent
 ./bin/agent -port 1995 -tmp-name deps-cn1 -dest-override /local/dependencies
 ```
 
-### 批量启动脚本 `scripts/start_agents_cluster.sh`
-
-- `--nodes`：Slurm 节点表达式（如 `cn[1-32]`，内部使用 `scontrol show hostnames` 展开）。
-- `--hosts`：逗号分隔 host 列表（无 Slurm 时可用）。
-- `--hostfile`：每行一个 host。
-- `--bin`：远端 agent 可执行文件路径（必填）。
-- `--port`：agent 监听端口，默认 `1995`。
-- `--tmp-name`：传给 agent 的临时目录名。
-- `--dest-override`：传给 agent 的统一落盘目录。
-- `--remote-logdir`：远端日志与 pid 目录，默认 `/tmp/trans-tools-agent`。
-- `--remote-workdir`：远端执行前切换目录（可选）。
-- `--insecure`：传给 agent，关闭 TLS（仅测试）。
-
-示例：
-
-```bash
-bash scripts/start_agents_cluster.sh \
-  --nodes 'cn[1-32]' \
-  --bin /opt/trans-tools/bin/agent \
-  --port 1995 \
-  --remote-logdir /tmp/trans-tools-agent
-```
-
 ## 测试脚本
 
 ### 单机端到端（不依赖 /vol8 / Lustre）
