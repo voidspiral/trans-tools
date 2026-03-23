@@ -5,6 +5,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -14,25 +15,100 @@ import (
 )
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "deps" {
-		runDeps(os.Args[2:])
+	args := os.Args[1:]
+
+	if len(args) == 0 {
+		printMainUsage(os.Stdout)
+		os.Exit(0)
+	}
+
+	switch args[0] {
+	case "-h", "--help", "help":
+		printMainUsage(os.Stdout)
+		os.Exit(0)
+	case "deps":
+		runDeps(args[1:])
 		return
 	}
 
-	showVersion := flag.Bool("version", false, "显示版本信息")
-	flag.Parse()
+	fs := flag.NewFlagSet("trans-tools", flag.ExitOnError)
+	fs.SetOutput(os.Stderr)
+	fs.Usage = func() { printMainUsage(os.Stderr) }
+
+	showVersion := fs.Bool("version", false, "显示版本信息（构建时间、Git commit）")
+
+	for _, a := range args {
+		if a == "-h" || a == "--help" {
+			printMainUsage(os.Stdout)
+			os.Exit(0)
+		}
+	}
+
+	if err := fs.Parse(args); err != nil {
+		os.Exit(2)
+	}
 
 	if *showVersion {
 		fmt.Println(version.String())
 		os.Exit(0)
 	}
 
-	fmt.Println("trans-tools - 工具集")
-	fmt.Println("用法示例:")
-	fmt.Println("  trans-tools -version")
-	fmt.Println("  trans-tools deps --program /path/to/prog --nodes cn[1-3]")
-	fmt.Println("  trans-tools deps --program /path/to/prog --nodes cn[1-3] --insecure  # 测试用，关闭 TLS")
-	fmt.Println("  trans-tools deps --program /path/to/prog --nodes cn[1-3] --filter-prefix /lib  # 单机测试，指定依赖目录")
+	if rest := fs.Args(); len(rest) > 0 {
+		fmt.Fprintf(os.Stderr, "未知子命令或多余参数: %s\n\n", strings.Join(rest, " "))
+		printMainUsage(os.Stderr)
+		os.Exit(2)
+	}
+
+	printMainUsage(os.Stdout)
+	os.Exit(0)
+}
+
+func printMainUsage(w io.Writer) {
+	fmt.Fprintf(w, `trans-tools — 程序依赖分析 + 多节点树形分发
+
+用法:
+  trans-tools [全局选项]
+  trans-tools deps [选项]
+
+全局选项:
+  -version       显示版本信息
+  -h, --help     显示本帮助
+
+子命令:
+  deps           分析可执行文件依赖，按目录打 tar，经 gRPC 树形分发到目标节点
+                 详见: trans-tools deps -h
+
+示例:
+  trans-tools -version
+  trans-tools deps --program /opt/app/bin/prog --nodes 'cn[1-32]' --port 1995
+  trans-tools deps --program /usr/bin/python3 --nodes 'h1:19951,h2:19952' --filter-prefix /lib --insecure
+`)
+}
+
+func printDepsUsage(w io.Writer, fs *flag.FlagSet) {
+	fmt.Fprintf(w, `用法: trans-tools deps [选项]
+
+分析 --program 指定程序的共享库等依赖，按目录分组打包为本地临时 tar（默认目录: /tmp/trans-tools-deps*），
+再向 --nodes 所列节点上的 agent 做树形分发，文件落在各节点 --dest 指定目录（或由 agent 的 -dest-override 覆盖）。
+
+必填:
+  -program string    待分析程序的绝对路径
+  -nodes string      目标节点：nodeset 表达式（如 cn[1-3]）或逗号分隔的 host[:port]（端口与 agent 监听一致）
+
+可选:
+`)
+	fs.SetOutput(w)
+	fs.PrintDefaults()
+	fmt.Fprintf(w, `
+说明:
+  -filter-prefix     多个目录用英文逗号分隔；传空字符串 "" 表示不按路径前缀筛选（使用全部依赖）。
+  -auto-clean        为 true（默认）时，分发结束后删除本地临时 tar 目录；调试可设 -auto-clean=false。
+  -insecure          关闭 TLS，仅用于测试；生产环境 agent 与客户端需一致配置。
+
+示例:
+  trans-tools deps --program /bin/myapp --nodes 'cn[1-100]' --dest /data/deps --filter-prefix /vol8
+  trans-tools deps --program /bin/tool --nodes 'n1,n2,n3' --width 32 --buffer 4M --min-size-mb 5
+`)
 }
 
 func parseFilterPrefixes(s string) []string {
@@ -51,6 +127,8 @@ func parseFilterPrefixes(s string) []string {
 
 func runDeps(args []string) {
 	fs := flag.NewFlagSet("deps", flag.ExitOnError)
+	fs.SetOutput(os.Stderr)
+
 	var (
 		program      string
 		nodes        string
@@ -63,23 +141,32 @@ func runDeps(args []string) {
 		autoClean    bool
 		insecure     bool
 	)
-	fs.StringVar(&program, "program", "", "要分析的程序路径（绝对路径）")
-	fs.StringVar(&nodes, "nodes", "", "目标节点列表（如 cn[1-3]）")
-	fs.IntVar(&minSizeMB, "min-size-mb", 10, "最小依赖文件大小（MB）")
-	fs.IntVar(&port, "port", 1995, "gRPC 服务端口")
-	fs.StringVar(&buffer, "buffer", "2M", "上传时的 payload 大小，例如 512k, 1M, 2M")
-	fs.IntVar(&width, "width", 50, "树形分发宽度")
-	fs.StringVar(&destDir, "dest", "/tmp/dependencies", "远端依赖存储目录")
-	fs.StringVar(&filterPrefix, "filter-prefix", "/vol8", "依赖挂载目录前缀，逗号分隔多目录（默认 /vol8）；空表示不筛选。单机测试可填 /lib 或 /lib,/usr/lib")
-	fs.BoolVar(&autoClean, "auto-clean", true, "完成后自动删除本地临时 tar 包")
-	fs.BoolVar(&insecure, "insecure", false, "关闭 gRPC TLS 与认证，仅用于测试多节点分发")
+
+	fs.StringVar(&program, "program", "", "要分析的可执行文件绝对路径")
+	fs.StringVar(&nodes, "nodes", "", "目标节点列表：nodeset（如 cn[1-3]）或 host:port 逗号列表")
+	fs.IntVar(&minSizeMB, "min-size-mb", 10, "只包含大于等于该大小（MB）的依赖文件")
+	fs.IntVar(&port, "port", 1995, "目标 agent gRPC 端口（nodes 为 host:port 时以各 host 端口为准）")
+	fs.StringVar(&buffer, "buffer", "2M", "流传输单块大小，如 512k、1M、2M")
+	fs.IntVar(&width, "width", 50, "树形分发每层下游数量上限")
+	fs.StringVar(&destDir, "dest", "/tmp/dependencies", "远端写入依赖的根目录（agent 可用 -dest-override 覆盖）")
+	fs.StringVar(&filterPrefix, "filter-prefix", "/vol8", "只打包路径具有此前缀的依赖；逗号多前缀；空字符串表示不筛选")
+	fs.BoolVar(&autoClean, "auto-clean", true, "结束后是否删除本地临时 tar 目录（/tmp/trans-tools-deps*）")
+	fs.BoolVar(&insecure, "insecure", false, "关闭 gRPC TLS（仅测试，须与 agent 一致）")
+
+	fs.Usage = func() { printDepsUsage(os.Stderr, fs) }
+
+	for _, a := range args {
+		if a == "-h" || a == "--help" {
+			printDepsUsage(os.Stdout, fs)
+			os.Exit(0)
+		}
+	}
 
 	if err := fs.Parse(args); err != nil {
-		fmt.Fprintln(os.Stderr, "解析参数失败:", err)
 		os.Exit(2)
 	}
 	if program == "" || nodes == "" {
-		fs.Usage()
+		printDepsUsage(os.Stderr, fs)
 		os.Exit(2)
 	}
 
@@ -146,7 +233,6 @@ func runDeps(args []string) {
 
 	fmt.Println("== 步骤 5: 结果汇总 ==")
 
-	// per-node 详细结果
 	if len(res.Details) > 0 {
 		fmt.Println("  节点分发明细:")
 		for _, d := range res.Details {

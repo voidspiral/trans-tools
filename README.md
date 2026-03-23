@@ -60,6 +60,95 @@ go build -o bin/agent ./cmd/agent
 - **单机环境（不需要 /vol8），只发 /lib 与 /usr/lib 的依赖**：`--filter-prefix "/lib,/usr/lib"`
 - **测试用关闭 TLS**：在 `deps` 与 `agent` 两端都加 `--insecure`
 
+## 工具参数用法
+
+### `trans-tools`
+
+- `-version`：输出版本、构建时间、commit 信息。
+
+示例：
+
+```bash
+./bin/trans-tools -version
+```
+
+### `trans-tools deps`
+
+- `--program`：必填，待分析程序的绝对路径。
+- `--nodes`：必填，目标节点列表。支持 nodeset（如 `cn[1-3]`）或 `host:port` 列表。
+- `--min-size-mb`：依赖文件最小大小阈值（MB），默认 `10`。
+- `--port`：目标 agent 监听端口，默认 `1995`（当 `--nodes` 使用 `host:port` 时以节点内端口为准）。
+- `--buffer`：单次发送 payload 大小，默认 `2M`（如 `512k`、`1M`、`2M`）。
+- `--width`：树形分发宽度，默认 `50`。
+- `--dest`：远端依赖落盘目录，默认 `/tmp/dependencies`。
+- `--filter-prefix`：依赖目录前缀过滤，默认 `/vol8`；多个目录用逗号分隔；空字符串表示不过滤。
+- `--auto-clean`：是否自动删除本地临时 tar 包，默认 `true`。
+- `--insecure`：关闭 TLS/认证（仅测试环境）。
+
+示例（生产常见）：
+
+```bash
+./bin/trans-tools deps \
+  --program /opt/app/bin/myprog \
+  --nodes "cn[1-100]" \
+  --port 1995 \
+  --width 50 \
+  --buffer 2M \
+  --dest /local/dependencies \
+  --min-size-mb 10 \
+  --filter-prefix "/vol8"
+```
+
+示例（单机/测试常见）：
+
+```bash
+./bin/trans-tools deps \
+  --program /usr/bin/python3 \
+  --nodes "cn1:19951,cn2:19952,cn3:19953" \
+  --width 2 \
+  --buffer 2M \
+  --dest /tmp/dependencies \
+  --min-size-mb 1 \
+  --filter-prefix "/lib,/usr/lib" \
+  --insecure
+```
+
+### `agent`
+
+- `-port`：gRPC 监听端口，默认 `1995`。
+- `-tmp-name`：临时目录名（实际路径 `/tmp/<tmp-name>`），默认 `trans-tools-agent`。
+- `-dest-override`：强制覆盖客户端请求的 `dest_dir`，统一落盘到本地指定目录（可选）。
+- `--insecure`：关闭 TLS（仅测试环境）。
+
+示例：
+
+```bash
+./bin/agent -port 1995 -tmp-name deps-cn1 -dest-override /local/dependencies
+```
+
+### 批量启动脚本 `scripts/start_agents_cluster.sh`
+
+- `--nodes`：Slurm 节点表达式（如 `cn[1-32]`，内部使用 `scontrol show hostnames` 展开）。
+- `--hosts`：逗号分隔 host 列表（无 Slurm 时可用）。
+- `--hostfile`：每行一个 host。
+- `--bin`：远端 agent 可执行文件路径（必填）。
+- `--port`：agent 监听端口，默认 `1995`。
+- `--tmp-name`：传给 agent 的临时目录名。
+- `--dest-override`：传给 agent 的统一落盘目录。
+- `--remote-logdir`：远端日志与 pid 目录，默认 `/tmp/trans-tools-agent`。
+- `--remote-workdir`：远端执行前切换目录（可选）。
+- `--insecure`：传给 agent，关闭 TLS（仅测试）。
+
+示例：
+
+```bash
+bash scripts/start_agents_cluster.sh \
+  --nodes 'cn[1-32]' \
+  --bin /opt/trans-tools/bin/agent \
+  --port 1995 \
+  --remote-logdir /tmp/trans-tools-agent
+```
+
 ## 测试脚本
 
 ### 单机端到端（不依赖 /vol8 / Lustre）

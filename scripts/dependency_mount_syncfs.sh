@@ -1,27 +1,29 @@
 #!/usr/bin/env bash
 # 依赖挂载脚本（基于 syncFS）
-# 使用思路：
-#   1. dependency_client / trans-tools 等组件将依赖打包为 *_so.tar 上传到某个目录（默认 /tmp/dependencies）
-#   2. 本脚本针对每个 *_so.tar：
-#        - 从文件名恢复原始目录（例如 zvol8zhomezuserzapp_so.tar -> /vol8/home/user/app）
-#        - 在本地创建 upperdir 并解压 tar 到 upperdir（必要时展平路径）
-#        - lower 别名(bind)：把原目录 bind 到独立路径，避免 lower 与 mountpoint 同路径递归
-#        - syncFS：lowerdir=lower 别名，mountpoint=原始目录（业务路径不变）
-#   3. 与业务兼容：程序仍访问 /vol8/... 原路径
+# 思路：
+#   1. 依赖 *_so.tar 放在 STORAGE_DIR（默认 /tmp/dependencies）
+#   2. 从文件名恢复目录（如 zvol8zhomezuserzapp_so.tar -> /vol8/home/user/app）
+#   3. upperdir 解压 tar；lowerdir 直接使用该路径（/vol8/...）
+#   4. syncFS 先挂到 /tmp 下独立 mountpoint，避免 lowerdir 与 mountpoint 同路径递归
+#   5. 可选：最后 mount --bind（参数 --bind / --fuse-only，见 usage）
 #
-# 注意：
-#   - 默认假定 syncFS 二进制名称为 syncFS，可通过 SYNCFS_BIN 环境变量覆盖
-#   - 需要具备 FUSE 挂载权限（一般需要 root 或已配置 user_allow_other 等）
-#
-# lowerdir 与 mountpoint：
-#   - lowerdir 使用 bind 别名：默认 /tmp/syncfs-lower/<overlay_name>
-#   - mountpoint 使用原始目录（例如 /vol8/test_libs）
-#   - 强制 lower_alias 与 mountpoint 分离，避免递归
+# SYNCFS_BIN、SYNCFS_STATE_DIR、SYNCFS_FUSE_MNT_BASE 可环境变量覆盖。
 
 set -euo pipefail
 
 SYNCFS_BIN="${SYNCFS_BIN:-syncFS}"
-DEBUG_LOG_PATH="/home/code/trans-tools/.cursor/debug.log"
+FUSE_MNT_BASE="${SYNCFS_FUSE_MNT_BASE:-/tmp}"
+
+usage() {
+  cat <<EOF
+用法:
+  $0 [--bind|--post-bind] [STORAGE_DIR]   默认：先 FUSE(/tmp 下)再 bind 到业务路径
+  $0 --fuse-only|--no-bind [STORAGE_DIR]   仅 FUSE 路径，不 bind（见 state 中 FUSE_MNT）
+  $0 -h|--help
+
+未指定 STORAGE_DIR：Slurm 用 DEPENDENCY_STORAGE_DIR，否则 /tmp/dependencies。
+EOF
+}
 
 if ! command -v "${SYNCFS_BIN}" >/dev/null 2>&1; then
   echo "[ERROR] 未找到 syncFS 可执行文件：${SYNCFS_BIN}"
@@ -29,15 +31,50 @@ if ! command -v "${SYNCFS_BIN}" >/dev/null 2>&1; then
   exit 1
 fi
 
-# 在 Slurm Prolog/TaskProlog 中优先使用 DEPENDENCY_STORAGE_DIR，否则允许通过第一个参数指定；
-# 如果都没有，则退回到 /tmp/dependencies。
-if [[ -n "${SLURM_JOB_ID:-}" ]]; then
+POST_BIND=1
+STORAGE_DIR_CLI=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --fuse-only|--no-bind)
+      POST_BIND=0
+      shift
+      ;;
+    --bind|--post-bind)
+      POST_BIND=1
+      shift
+      ;;
+    -*)
+      echo "[ERROR] 未知选项: $1" >&2
+      usage >&2
+      exit 1
+      ;;
+    *)
+      if [[ -n "${STORAGE_DIR_CLI}" ]]; then
+        echo "[ERROR] 多余的目录参数: $1" >&2
+        exit 1
+      fi
+      STORAGE_DIR_CLI="$1"
+      shift
+      ;;
+  esac
+done
+
+if [[ -n "${STORAGE_DIR_CLI}" ]]; then
+  STORAGE_DIR="${STORAGE_DIR_CLI}"
+elif [[ -n "${SLURM_JOB_ID:-}" ]]; then
   STORAGE_DIR="${DEPENDENCY_STORAGE_DIR:-/tmp/dependencies}"
 else
-  STORAGE_DIR="${1:-/tmp/dependencies}"
+  STORAGE_DIR="/tmp/dependencies"
 fi
 
+DEBUG_LOG_PATH="${STORAGE_DIR}/debug.log"
+
 echo "[INFO] 使用依赖存放目录: ${STORAGE_DIR}"
+echo "[INFO] FUSE 挂载根目录: ${FUSE_MNT_BASE}；模式: $([[ "${POST_BIND}" -eq 1 ]] && echo post-bind || echo fuse-only)"
 
 if [[ ! -d "${STORAGE_DIR}" ]]; then
   echo "[WARN] 目录不存在: ${STORAGE_DIR}"
@@ -53,11 +90,9 @@ if (( ${#tar_files[@]} == 0 )); then
   exit 0
 fi
 
-# syncFS 的 upperdir/状态目录默认与 Go 分发落盘目录一致；可通过 SYNCFS_STATE_DIR 覆盖。
 BASE_DIR="${SYNCFS_STATE_DIR:-${STORAGE_DIR}/.syncfs}"
 mkdir -p "${BASE_DIR}"
-LOWER_ALIAS_BASE="${SYNCFS_LOWER_ALIAS_BASE:-/tmp/syncfs-lower}"
-mkdir -p "${LOWER_ALIAS_BASE}"
+mkdir -p "${FUSE_MNT_BASE}"
 
 unmount_one() {
   local mp="$1"
@@ -79,7 +114,6 @@ is_syncfs_mounted() {
   mount | awk -v m="$mp" '($1=="syncFS" || $5=="fuse.syncFS") && $3==m {found=1} END{exit(found?0:1)}'
 }
 
-# #region agent log
 debug_log() {
   local hypothesis_id="$1"
   local location="$2"
@@ -88,17 +122,18 @@ debug_log() {
   printf '{"id":"log_%s","timestamp":%s,"runId":"mount-script","hypothesisId":"%s","location":"%s","message":"%s","data":%s}\n' \
     "$(date +%s%N)" "$(date +%s%3N)" "${hypothesis_id}" "${location}" "${message}" "${data_json}" >> "${DEBUG_LOG_PATH}"
 }
-# #endregion
+
+post_bind_enabled() {
+  [[ "${POST_BIND}" -eq 1 ]]
+}
 
 for tar_path in "${tar_files[@]}"; do
   tar_name="$(basename "${tar_path}")"
 
-  # 从 tar 文件名推导原始目录：
-  #   /vol8/home/user/app -> zvol8zhomezuserzapp_so.tar
   base="${tar_name%_so.tar}"
   directory="${base//z//}"
 
-  echo "[INFO] 处理 tar: ${tar_name} -> 依赖目录(lowerdir): ${directory}"
+  echo "[INFO] 处理 tar: ${tar_name} -> 业务路径(lowerdir): ${directory}"
   debug_log "H1" "dependency_mount_syncfs.sh:directory" "resolved lower target" "{\"directory\":\"${directory}\"}"
 
   if [[ -z "${directory}" || "${directory}" != /* ]]; then
@@ -110,33 +145,30 @@ for tar_path in "${tar_files[@]}"; do
   overlay_name="${overlay_name//\//_}"
 
   state_file="${BASE_DIR}/${overlay_name}.state"
-  mnt_dir="${directory}"
-  lower_alias="${LOWER_ALIAS_BASE}/${overlay_name}"
+  lower_dir="${directory}"
+  fuse_mnt="${FUSE_MNT_BASE}/syncfs-${overlay_name}"
   upper_dir="${BASE_DIR}/${overlay_name}_upper"
-  mkdir -p "${lower_alias}"
+  mkdir -p "${fuse_mnt}"
   mkdir -p "${upper_dir}"
 
-  # 若该挂载点已挂载 syncFS，先卸载（幂等）
-  if is_syncfs_mounted "${mnt_dir}"; then
-    echo "[INFO] 检测到已挂载 syncFS: ${mnt_dir}，先卸载"
-    debug_log "H2" "dependency_mount_syncfs.sh:pre_unmount" "mountpoint already syncfs before new mount" "{\"mountpoint\":\"${mnt_dir}\"}"
-    unmount_one "${mnt_dir}"
+  if post_bind_enabled; then
+    if mountpoint -q "${directory}" 2>/dev/null; then
+      echo "[INFO] 卸载业务路径上的挂载（含 bind 层）: ${directory}"
+      umount -l "${directory}" 2>/dev/null || true
+    fi
   fi
 
-  # lower 别名 bind：确保 syncFS 的 lowerdir 始终指向未被覆盖的真实目录
-  echo "[INFO] 创建 lowerdir 别名(bind): ${directory} -> ${lower_alias}"
-  if mountpoint -q "${lower_alias}"; then
-    umount -l "${lower_alias}" 2>/dev/null || true
+  if is_syncfs_mounted "${fuse_mnt}"; then
+    echo "[INFO] 检测到已挂载 syncFS: ${fuse_mnt}，先卸载"
+    debug_log "H2" "dependency_mount_syncfs.sh:pre_unmount" "fuse mountpoint already syncfs" "{\"fuseMnt\":\"${fuse_mnt}\"}"
+    unmount_one "${fuse_mnt}"
   fi
-  if ! mount --bind "${directory}" "${lower_alias}"; then
-    echo "[ERROR] 创建 lowerdir 别名失败: ${lower_alias}"
-    continue
-  fi
-  lower_alias_fstype="$(findmnt -T "${lower_alias}" -n -o FSTYPE 2>/dev/null || echo unknown)"
-  lower_alias_prop="$(findmnt -T "${lower_alias}" -n -o PROPAGATION 2>/dev/null || echo unknown)"
-  debug_log "H3" "dependency_mount_syncfs.sh:after_bind" "lower alias bind result" "{\"lowerAlias\":\"${lower_alias}\",\"fstype\":\"${lower_alias_fstype}\",\"propagation\":\"${lower_alias_prop}\"}"
 
-  # 清理旧的 upper 内容（仅目录内容，不删除目录本身）
+  if is_syncfs_mounted "${directory}"; then
+    echo "[INFO] 检测到业务路径上仍有 syncFS（旧模式），先卸载: ${directory}"
+    unmount_one "${directory}"
+  fi
+
   echo "[INFO] 清理 upperdir: ${upper_dir}"
   rm -rf "${upper_dir:?}/"* 2>/dev/null || true
 
@@ -151,7 +183,6 @@ for tar_path in "${tar_files[@]}"; do
     continue
   fi
 
-  # 若 tar 内带完整路径（如 vol8/test_libs/...），解压后 upper 会多出一层，需展平到 upper 根
   inner_path="${directory#/}"
   if [[ -d "${upper_dir}/${inner_path}" ]]; then
     echo "[INFO] 展平 tar 内路径: ${inner_path} -> upper 根目录"
@@ -169,29 +200,39 @@ for tar_path in "${tar_files[@]}"; do
     done
   fi
 
-  # lowerdir=别名路径；mountpoint=原始业务路径
-  echo "[INFO] 使用 syncFS 挂载: lowerdir=${lower_alias}, upperdir=${upper_dir}, mountpoint=${mnt_dir}"
+  echo "[INFO] syncFS: lowerdir=${lower_dir}, upperdir=${upper_dir}, mountpoint=${fuse_mnt}"
 
-  if ! "${SYNCFS_BIN}" -o "lowerdir=${lower_alias},upperdir=${upper_dir}" "${mnt_dir}"; then
-    echo "[ERROR] syncFS 挂载失败: ${mnt_dir}"
+  if ! "${SYNCFS_BIN}" -o "lowerdir=${lower_dir},upperdir=${upper_dir}" "${fuse_mnt}"; then
+    echo "[ERROR] syncFS 挂载失败: ${fuse_mnt}"
     continue
   fi
-  mnt_fstype="$(findmnt -T "${mnt_dir}" -n -o FSTYPE 2>/dev/null || echo unknown)"
-  lower_alias_fstype_after="$(findmnt -T "${lower_alias}" -n -o FSTYPE 2>/dev/null || echo unknown)"
-  debug_log "H4" "dependency_mount_syncfs.sh:after_syncfs_mount" "post mount fstype snapshot" "{\"mountpoint\":\"${mnt_dir}\",\"mountpointFstype\":\"${mnt_fstype}\",\"lowerAlias\":\"${lower_alias}\",\"lowerAliasFstype\":\"${lower_alias_fstype_after}\"}"
-  if [[ "${lower_alias_fstype_after}" == "fuse.syncFS" ]]; then
-    debug_log "H5" "dependency_mount_syncfs.sh:after_syncfs_mount" "lower alias overmounted by syncfs (likely propagation recursion)" "{\"mountpoint\":\"${mnt_dir}\",\"lowerAlias\":\"${lower_alias}\"}"
+
+  mnt_fstype="$(findmnt -T "${fuse_mnt}" -n -o FSTYPE 2>/dev/null || echo unknown)"
+  debug_log "H4" "dependency_mount_syncfs.sh:after_syncfs_mount" "fuse mount fstype" "{\"fuseMnt\":\"${fuse_mnt}\",\"fstype\":\"${mnt_fstype}\"}"
+
+  if post_bind_enabled; then
+    echo "[INFO] mount --bind（后置）: ${fuse_mnt} -> ${directory}"
+    if ! mount --bind "${fuse_mnt}" "${directory}"; then
+      echo "[ERROR] mount --bind 失败，正在卸载 FUSE: ${fuse_mnt}"
+      unmount_one "${fuse_mnt}"
+      continue
+    fi
   fi
 
   cat > "${state_file}" <<EOF
-LOWERDIR=${directory}
-LOWER_ALIAS=${lower_alias}
-MOUNTPOINT=${mnt_dir}
+LOWERDIR=${lower_dir}
+FUSE_MNT=${fuse_mnt}
+MOUNTPOINT=${directory}
+POST_BIND=${POST_BIND}
 UPPER_DIR=${upper_dir}
 TAR_PATH=${tar_path}
 EOF
 
-  echo "[INFO] ✓ syncFS 挂载成功: ${mnt_dir}（lowerdir=${directory}）"
+  if post_bind_enabled; then
+    echo "[INFO] ✓ 完成: ${directory}（lowerdir=${lower_dir}，经 bind <- ${fuse_mnt}）"
+  else
+    echo "[INFO] ✓ 完成: 请使用 FUSE 路径 ${fuse_mnt}（未 bind 到 ${directory}）"
+  fi
 done
 
 echo "[INFO] 所有 tar 处理完成（syncFS 模式）"
