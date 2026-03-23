@@ -7,11 +7,14 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
 	"trans-tools/internal/deps"
 	"trans-tools/internal/version"
+
+	"github.com/iskylite/nodeset"
 )
 
 func main() {
@@ -232,15 +235,53 @@ func runDeps(args []string) {
 	}
 
 	fmt.Println("== 步骤 5: 结果汇总 ==")
+	printResult(res)
+	if len(res.FailedNodes) > 0 {
+		os.Exit(1)
+	}
+}
 
-	if len(res.Details) > 0 {
-		fmt.Println("  节点分发明细:")
-		for _, d := range res.Details {
-			status := "OK  "
-			if !d.OK {
-				status = "FAIL"
+// printResult 按 ClusterShell -b 风格聚合打印分发结果：
+//   - 成功节点：按 dir 分组，折叠为 nodeset 表达式，只打印一行
+//   - 失败节点：逐条打印，包含错误信息
+func printResult(res deps.Result) {
+	if len(res.Details) == 0 {
+		return
+	}
+
+	// 按 dir 分组
+	type dirGroup struct {
+		okNodes   []string
+		failItems []deps.NodeResult
+	}
+	groups := map[string]*dirGroup{}
+	dirOrder := []string{}
+	for _, d := range res.Details {
+		if _, exists := groups[d.Dir]; !exists {
+			groups[d.Dir] = &dirGroup{}
+			dirOrder = append(dirOrder, d.Dir)
+		}
+		if d.OK {
+			groups[d.Dir].okNodes = append(groups[d.Dir].okNodes, d.Nodelist)
+		} else {
+			groups[d.Dir].failItems = append(groups[d.Dir].failItems, d)
+		}
+	}
+	sort.Strings(dirOrder)
+
+	fmt.Println()
+	for _, dir := range dirOrder {
+		g := groups[dir]
+
+		if len(g.okNodes) > 0 {
+			folded, err := nodeset.Merge(g.okNodes...)
+			if err != nil {
+				folded = strings.Join(g.okNodes, ",")
 			}
-			fmt.Printf("    [%s] dir=%-40s node=%-20s msg=%s\n", status, d.Dir, d.Nodelist, d.Message)
+			fmt.Printf("  [OK  ] dir=%-36s  nodes=%s (%d)\n", dir, folded, len(g.okNodes))
+		}
+		for _, f := range g.failItems {
+			fmt.Printf("  [FAIL] dir=%-36s  node=%s  msg=%s\n", dir, f.Nodelist, f.Message)
 		}
 	}
 
@@ -251,8 +292,5 @@ func runDeps(args []string) {
 	fmt.Printf("失败目录组: %d\n", len(res.FailedNodes))
 	for _, n := range res.FailedNodes {
 		fmt.Println("  FAIL:", n)
-	}
-	if len(res.FailedNodes) > 0 {
-		os.Exit(1)
 	}
 }
