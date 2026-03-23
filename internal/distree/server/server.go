@@ -253,7 +253,7 @@ func Serve(ctx context.Context, cfg Config, port int) error {
 		errCh <- grpcSrv.Serve(lis)
 	}()
 
-	select {
+	select {image.png
 	case <-ctx.Done():
 		grpcSrv.GracefulStop()
 		return nil
