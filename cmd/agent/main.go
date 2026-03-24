@@ -20,7 +20,7 @@ func main() {
 	)
 
 	flag.StringVar(&tmpDir, "tmp-name", "trans-tools-agent", "临时文件目录名（用于落盘前的临时文件存放，位于 /tmp 下）")
-	flag.IntVar(&port, "port", 1995, "gRPC 监听端口")
+	flag.IntVar(&port, "port", 2007, "gRPC 监听端口")
 	flag.StringVar(&destOverride, "dest-override", "", "覆盖客户端请求的 dest_dir，将接收到的文件落盘到此本地目录（为空则使用客户端指定的路径）")
 	flag.BoolVar(&insecure, "insecure", false, "关闭 TLS，仅用于测试环境")
 	flag.Parse()

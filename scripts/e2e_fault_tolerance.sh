@@ -146,13 +146,10 @@ echo "  recv FAIL     : ${fail_count}"
 echo "  expected OK   : $(( NODE_COUNT - 1 ))"
 echo "  expected FAIL : 1"
 
-# After gateway-fallback fix: any single node failure causes exactly 1 failure.
-# The parent node detects the failed gateway, reports it, then promotes the next
-# node in the group as the new gateway, so the rest of the subtree still receives.
-case "${FAIL_IDX}" in
-  1)  expected_fail=${NODE_COUNT} ;;  # root: no one can receive
-  *)  expected_fail=1 ;;              # any other node: only that node fails
-esac
+# With client+server fallback: any single node failure (including root) causes
+# exactly 1 failure.  The client or parent node skips the failed gateway and
+# promotes the next node in the group.
+expected_fail=1
 expected_ok=$(( NODE_COUNT - expected_fail ))
 
 if (( ok_count == expected_ok && fail_count == expected_fail )); then

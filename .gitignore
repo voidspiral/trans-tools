@@ -33,4 +33,5 @@ Thumbs.db
 # Other dir
 myclush/
 newserver/
-sync/
+syncFS/
+fake2/

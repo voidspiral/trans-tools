@@ -29,13 +29,13 @@ go build -o bin/agent ./cmd/agent
 ### 启动 agent（每台目标机都要运行）
 
 ```bash
-./bin/agent -port 1995
+./bin/agent -port 2007
 ```
 
 测试环境可使用不安全模式：
 
 ```bash
-./bin/agent -port 1995 --insecure
+./bin/agent -port 2007 --insecure
 ```
 
 ### 执行依赖分发（deps）
@@ -44,7 +44,7 @@ go build -o bin/agent ./cmd/agent
 ./bin/trans-tools deps \
   --program /abs/path/to/program \
   --nodes "cn[1-3]" \
-  --port 1995 \
+  --port 2007 \
   --width 50 \
   --buffer 2M \
   --dest /tmp/dependencies \
@@ -52,7 +52,7 @@ go build -o bin/agent ./cmd/agent
   --filter-prefix "/vol8"
 ```
 
-运行前请确保目标节点上已启动 `agent` 并监听对应端口（默认 `1995`）。
+运行前请确保目标节点上已启动 `agent` 并监听对应端口（默认 `2007`）。
 
 常用变体：
 
@@ -77,7 +77,7 @@ go build -o bin/agent ./cmd/agent
 - `--program`：必填，待分析程序的绝对路径。
 - `--nodes`：必填，目标节点列表。支持 nodeset（如 `cn[1-3]`）或 `host:port` 列表。
 - `--min-size-mb`：依赖文件最小大小阈值（MB），默认 `10`。
-- `--port`：目标 agent 监听端口，默认 `1995`（当 `--nodes` 使用 `host:port` 时以节点内端口为准）。
+- `--port`：目标 agent 监听端口，默认 `2007`（当 `--nodes` 使用 `host:port` 时以节点内端口为准）。
 - `--buffer`：单次发送 payload 大小，默认 `2M`（如 `512k`、`1M`、`2M`）。
 - `--width`：树形分发宽度，默认 `50`。
 - `--dest`：远端依赖落盘目录，默认 `/tmp/dependencies`。
@@ -91,7 +91,7 @@ go build -o bin/agent ./cmd/agent
 ./bin/trans-tools deps \
   --program /opt/app/bin/myprog \
   --nodes "cn[1-100]" \
-  --port 1995 \
+  --port 2007 \
   --width 50 \
   --buffer 2M \
   --dest /local/dependencies \
@@ -115,7 +115,7 @@ go build -o bin/agent ./cmd/agent
 
 ### `agent`
 
-- `-port`：gRPC 监听端口，默认 `1995`。
+- `-port`：gRPC 监听端口，默认 `2007`。
 - `-tmp-name`：临时目录名（实际路径 `/tmp/<tmp-name>`），默认 `trans-tools-agent`。
 - `-dest-override`：强制覆盖客户端请求的 `dest_dir`，统一落盘到本地指定目录（可选）。
 - `--insecure`：关闭 TLS（仅测试环境）。
@@ -123,7 +123,7 @@ go build -o bin/agent ./cmd/agent
 示例：
 
 ```bash
-./bin/agent -port 1995 -tmp-name deps-cn1 -dest-override /local/dependencies
+./bin/agent -port 2007 -tmp-name deps-cn1 -dest-override /local/dependencies
 ```
 
 ## 测试脚本

@@ -7,7 +7,7 @@
 #   - 节点列表使用 "host:port" 格式让端口随协议流转，无需环境变量
 #
 # 生产环境示例：
-#   - 所有节点监听同一端口：--nodes "cn[1-100]" --port 1995
+#   - 所有节点监听同一端口：--nodes "cn[1-100]" --port 2007
 #   - 每台节点用自己的 --dest-override /local/deps 启动 agent
 set -euo pipefail
 
@@ -42,7 +42,7 @@ for node in cn1 cn2 cn3; do
     cn1) PORT="${PORT_CN1}" ;;
     cn2) PORT="${PORT_CN2}" ;;
     cn3) PORT="${PORT_CN3}" ;;
-    *)   PORT=1995 ;;
+    *)   PORT=2007 ;;
   esac
   echo "  agent ${node}: port=${PORT}  dest-override=${DEST_DIR}"
   "${BIN_AGENT}" \
