@@ -1,5 +1,7 @@
 // Package client 实现 DistTree 客户端，供 trans-tools deps 调用。
-// 每次调用 PutStreamFile 对应一轮传输（一个文件）；多文件时由上层循环调用。
+// 容错策略：client 按 width 将节点分组，每组独立建连。
+// 若某组的 gateway 不可达，只标记该节点失败，剩余节点提升为新组继续。
+// 每组独立传输（每组都从本地读一遍文件），互不影响。
 package client
 
 import (
@@ -10,6 +12,7 @@ import (
 	"log"
 	"math"
 	"os"
+	"sync"
 	"syscall"
 	"time"
 
@@ -29,59 +32,110 @@ type Reply struct {
 
 // Options 控制单次 PutStreamFile 行为。
 type Options struct {
-	// Port 是所有节点的默认端口；若节点列表中某节点以 "host:port" 格式给出，则以该端口为准。
-	Port string
-	// Width 是树宽：每个中间节点最多向 Width 个子节点建立直连流。
-	Width int32
-	// BufferSize 是每次 Send 的字节数。
+	Port       string
+	Width      int32
 	BufferSize int
-	// Insecure 为 true 时不加载 TLS（测试用）。
-	Insecure bool
-	// DestDir 是远端落盘目录。
-	DestDir string
+	Insecure   bool
+	DestDir    string
 }
 
-// PutStreamFile 将 localFile 通过树形分发传输到 nodesExpr 描述的节点集合，
-// 每个节点将文件保存到 opts.DestDir/<basename(localFile)>。
-//
-// nodesExpr 支持两种格式（可混用）：
-//   - "cn[1-3]" 或 "cn1,cn2,cn3"       → 所有节点使用 opts.Port
-//   - "cn1:19951,cn2:19952,cn3:19953"  → 每个节点使用各自端口（单机测试场景）
-func PutStreamFile(ctx context.Context, localFile, nodesExpr string, opts Options) ([]Reply, error) {
-	f, err := os.Open(localFile)
-	if err != nil {
-		return nil, fmt.Errorf("open %s: %w", localFile, err)
-	}
-	defer f.Close()
+type fileMeta struct {
+	filename string
+	size     int64
+	uid, gid uint32
+	filemod  uint32
+	modtime  int64
+}
 
-	fi, err := f.Stat()
+// PutStreamFile 将 localFile 通过树形分发传输到 nodesExpr 描述的节点集合。
+// 按 width 将节点分成若干组，每组独立建流发送。单组内 gateway 失败时只报告
+// 该节点，剩余节点提升为新组继续尝试，保证其他健康节点不受影响。
+func PutStreamFile(ctx context.Context, localFile, nodesExpr string, opts Options) ([]Reply, error) {
+	fi, err := os.Stat(localFile)
 	if err != nil {
 		return nil, fmt.Errorf("stat %s: %w", localFile, err)
 	}
 
 	var uid, gid uint32
-	var filemod uint32
 	if sys, ok := fi.Sys().(*syscall.Stat_t); ok {
 		uid = sys.Uid
 		gid = sys.Gid
 	}
-	filemod = uint32(fi.Mode().Perm())
-	modtime := fi.ModTime().Unix()
-	filename := fi.Name()
+	meta := fileMeta{
+		filename: fi.Name(),
+		size:     fi.Size(),
+		uid:      uid,
+		gid:      gid,
+		filemod:  uint32(fi.Mode().Perm()),
+		modtime:  fi.ModTime().Unix(),
+	}
 
-	// 展开节点列表；支持 host:port 格式
 	addrs := nodeutil.Expand(nodesExpr)
 	if len(addrs) == 0 {
 		return nil, fmt.Errorf("empty node list: %q", nodesExpr)
 	}
 
-	// 第一个节点：直连目标；其余节点作为 nodelist 下传（保留 host:port 格式）
-	first := addrs[0]
-	rest := addrs[1:]
+	width := int(opts.Width)
+	if width <= 0 {
+		width = 1
+	}
+	groups := nodeutil.SplitByWidth(addrs, width)
 
-	port := nodeutil.ResolvePort(first, opts.Port)
-	addr := fmt.Sprintf("%s:%s", first.Host, port)
+	var allReplies []Reply
+	var mu sync.Mutex
+	var wg sync.WaitGroup
 
+	for _, group := range groups {
+		group := group
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			replies := sendToGroup(ctx, localFile, meta, group, opts)
+			mu.Lock()
+			allReplies = append(allReplies, replies...)
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+
+	totalBlocks := int64(math.Ceil(float64(meta.size) / float64(resolveBufferSize(opts.BufferSize))))
+	fmt.Printf("\r  发送进度: %d/%d\n", totalBlocks, totalBlocks)
+
+	return allReplies, nil
+}
+
+// sendToGroup 尝试连接 group[0] 作为 gateway，成功则流式发送文件并将 group[1:]
+// 作为 nodelist 下传。若 gateway 连接失败，记录该节点失败，然后将 group[1:] 递归
+// 重新分组继续尝试，直到找到可用 gateway 或整组耗尽。
+func sendToGroup(ctx context.Context, localFile string, meta fileMeta, group []nodeutil.NodeAddr, opts Options) []Reply {
+	remaining := group
+	var failReplies []Reply
+
+	for len(remaining) > 0 {
+		gateway := remaining[0]
+		rest := remaining[1:]
+
+		port := nodeutil.ResolvePort(gateway, opts.Port)
+		addr := fmt.Sprintf("%s:%s", gateway.Host, port)
+
+		replies, err := streamToNode(ctx, localFile, meta, addr, rest, opts)
+		if err != nil {
+			log.Printf("[distree client] connect to %s failed: %v", addr, err)
+			failReplies = append(failReplies, Reply{
+				OK:       false,
+				Nodelist: gateway.Host,
+				Message:  err.Error(),
+			})
+			remaining = rest
+			continue
+		}
+		return append(failReplies, replies...)
+	}
+	return failReplies
+}
+
+// streamToNode 建连 → 流式发送文件 → 收集所有 Reply。
+func streamToNode(ctx context.Context, localFile string, meta fileMeta, addr string, downstream []nodeutil.NodeAddr, opts Options) ([]Reply, error) {
 	dialCtx, dialCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer dialCancel()
 
@@ -96,22 +150,22 @@ func PutStreamFile(ctx context.Context, localFile, nodesExpr string, opts Option
 	}
 	defer conn.Close()
 
-	client := pb.NewDistTreeClient(conn)
-	stream, err := client.PutStream(ctx)
+	cli := pb.NewDistTreeClient(conn)
+	stream, err := cli.PutStream(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("open PutStream to %s: %w", addr, err)
 	}
 
-	bufSize := opts.BufferSize
-	if bufSize <= 0 {
-		bufSize = 2 * 1024 * 1024
+	f, err := os.Open(localFile)
+	if err != nil {
+		return nil, fmt.Errorf("open %s: %w", localFile, err)
 	}
+	defer f.Close()
 
-	totalBlocks := int64(math.Ceil(float64(fi.Size()) / float64(bufSize)))
-	sent := int64(0)
+	bufSize := resolveBufferSize(opts.BufferSize)
+	buf := make([]byte, bufSize)
 	isFirst := true
 
-	buf := make([]byte, bufSize)
 	for {
 		select {
 		case <-ctx.Done():
@@ -136,29 +190,25 @@ func PutStreamFile(ctx context.Context, localFile, nodesExpr string, opts Option
 			Body:    chunk,
 		}
 		if isFirst {
-			req.Name = filename
-			// rest 保留 host:port 格式，以便中间节点按节点自身端口拨号
-			req.Nodelist = nodeutil.Join(rest)
+			req.Name = meta.filename
+			req.Nodelist = nodeutil.Join(downstream)
 			req.Port = opts.Port
 			req.Width = opts.Width
-			req.Uid = uid
-			req.Gid = gid
-			req.Filemod = filemod
-			req.Modtime = modtime
+			req.Uid = meta.uid
+			req.Gid = meta.gid
+			req.Filemod = meta.filemod
+			req.Modtime = meta.modtime
 			isFirst = false
 		}
 
 		if serr := stream.Send(req); serr != nil {
-			return nil, fmt.Errorf("send to %s: %w", first.Host, serr)
+			return nil, fmt.Errorf("send to %s: %w", addr, serr)
 		}
-		sent++
-		fmt.Printf("\r  发送进度: %d/%d", sent, totalBlocks)
 
 		if rerr == io.EOF {
 			break
 		}
 	}
-	fmt.Println()
 
 	if err = stream.CloseSend(); err != nil {
 		return nil, fmt.Errorf("CloseSend: %w", err)
@@ -181,6 +231,13 @@ func PutStreamFile(ctx context.Context, localFile, nodesExpr string, opts Option
 		})
 	}
 	return replies, nil
+}
+
+func resolveBufferSize(size int) int {
+	if size <= 0 {
+		return 2 * 1024 * 1024
+	}
+	return size
 }
 
 // ConvertBufferSize 将 "2M"/"512k" 等字符串转换为字节数。

@@ -8,8 +8,9 @@ import (
 	"trans-tools/internal/distree/client"
 )
 
-// DistributeTarTrees 使用自研 distree 树形协议，按轮次（每个 tar 文件一轮）分发到目标节点。
-// 多个 tar 文件并发发起，每个文件独立建立一次 PutStream 调用。
+// DistributeTarTrees 使用 distree 树形协议分发 tar 文件到目标节点。
+// 每个 tar 文件独立发起一轮 PutStreamFile 调用，按 width 分组并发送。
+// 单节点故障不影响其他节点，结果汇总后返回。
 func DistributeTarTrees(ctx context.Context, tarFiles []TarFile, nodesPattern string, opt Options) (Result, error) {
 	if len(tarFiles) == 0 {
 		return Result{}, nil
