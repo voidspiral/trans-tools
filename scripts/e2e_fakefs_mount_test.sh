@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# e2e test: verify dependency_mount_syncfs.sh
+# e2e test: verify dependency_mount_fakefs.sh
 #
 # This is a local smoke test that fakes a /vol8/lower directory.
 # It does NOT require Lustre; it only validates:
-#   - syncFS mount works (lower + extracted upper visible)
+#   - fakefs mount works (lower + extracted upper visible)
 #   - running mount script twice is idempotent (mode 1)
 #
 # Run:
-#   sudo bash scripts/e2e_syncfs_mount_test.sh --mode 1
-#   sudo bash scripts/e2e_syncfs_mount_test.sh --mode 2
-#   sudo bash scripts/e2e_syncfs_mount_test.sh --mode 3
+#   sudo bash scripts/e2e_fakefs_mount_test.sh --mode 1
+#   sudo bash scripts/e2e_fakefs_mount_test.sh --mode 2
+#   sudo bash scripts/e2e_fakefs_mount_test.sh --mode 3
 #
 # Modes:
 #   1: mount -> verify -> mount again (idempotency) -> cleanup(unmount) & remove dirs
@@ -22,7 +22,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 LOWER_DIR="/vol8/test_libs"
 STORAGE_DIR="/tmp/dependencies"
-SYNCFS_STATE_DIR="${STORAGE_DIR}/.syncfs"
+FAKEFS_STATE_DIR="${STORAGE_DIR}/.fakefs"
 # 方案A：挂载点即业务原路径
 MNT_DIR="${LOWER_DIR}"
 MKDEPS_DIR="/tmp/mkdeps"
@@ -30,11 +30,11 @@ MKDEPS_DIR="/tmp/mkdeps"
 TAR_NAME="zvol8ztest_libs_so.tar"
 TAR_PATH="${STORAGE_DIR}/${TAR_NAME}"
 
-SYNCFS_BIN="${SYNCFS_BIN:-${ROOT_DIR}/syncFS/syncFS}"
+FAKEFS_BIN="${FAKEFS_BIN:-fakefs}"
 MODE="${MODE:-2}"
 
 usage() {
-  echo "Usage: sudo bash scripts/e2e_syncfs_mount_test.sh [--mode 1|2|3]"
+  echo "Usage: sudo bash scripts/e2e_fakefs_mount_test.sh [--mode 1|2|3]"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -78,9 +78,8 @@ require_root() {
 }
 
 require_bin() {
-  if [[ ! -x "${SYNCFS_BIN}" ]]; then
-    echo "[ERROR] syncFS binary not found/executable: ${SYNCFS_BIN}"
-    echo "         Build it with: make -C ${ROOT_DIR}/syncFS"
+  if ! command -v "${FAKEFS_BIN}" >/dev/null 2>&1; then
+    echo "[ERROR] fakefs binary not found: ${FAKEFS_BIN}"
     exit 1
   fi
 }
@@ -107,7 +106,7 @@ fi
 
 if [[ "${MODE}" == "1" ]]; then
   echo "[INFO] MODE=1: best-effort cleanup before start (unmount + remove dirs)..."
-  sudo -E bash "${ROOT_DIR}/scripts/dependency_mount_cleanup_syncfs.sh" --remove-dirs "${STORAGE_DIR}" 2>/dev/null || true
+  sudo -E bash "${ROOT_DIR}/scripts/dependency_mount_cleanup_fakefs.sh" --remove-dirs "${STORAGE_DIR}" 2>/dev/null || true
 fi
 
 echo "[INFO] Clean previous tar (best-effort)..."
@@ -127,12 +126,11 @@ mkdir -p "${MKDEPS_DIR}/vol8/test_libs"
 echo "upper-from-tar" > "${MKDEPS_DIR}/vol8/test_libs/libfake.so"
 tar -cf "${TAR_PATH}" -C "${MKDEPS_DIR}" "vol8/test_libs/libfake.so"
 
-echo "[INFO] Build syncFS (if needed)..."
-make -C "${ROOT_DIR}/syncFS" >/dev/null
+echo "[INFO] Check fakefs binary..."
 require_bin
 
 echo "[INFO] Mount (first run)..."
-sudo -E env SYNCFS_BIN="${SYNCFS_BIN}" bash "${ROOT_DIR}/scripts/dependency_mount_syncfs.sh" "${STORAGE_DIR}"
+sudo -E env FAKEFS_BIN="${FAKEFS_BIN}" bash "${ROOT_DIR}/scripts/dependency_mount_fakefs.sh" "${STORAGE_DIR}"
 
 echo "[INFO] df -h check (mount visibility)"
 df -h "${MNT_DIR}" || df -h
@@ -143,12 +141,12 @@ cat "${MNT_DIR}/libfake.so"
 
 if [[ "${MODE}" == "1" ]]; then
   echo "[INFO] Mount again (idempotency test)..."
-  sudo -E env SYNCFS_BIN="${SYNCFS_BIN}" bash "${ROOT_DIR}/scripts/dependency_mount_syncfs.sh" "${STORAGE_DIR}"
+  sudo -E env FAKEFS_BIN="${FAKEFS_BIN}" bash "${ROOT_DIR}/scripts/dependency_mount_fakefs.sh" "${STORAGE_DIR}"
   echo "[INFO] Verify after remount..."
   cat "${MNT_DIR}/libfake.so"
 
   echo "[INFO] Cleanup (unmount + remove dirs)..."
-  sudo -E bash "${ROOT_DIR}/scripts/dependency_mount_cleanup_syncfs.sh" --remove-dirs "${STORAGE_DIR}"
+  sudo -E bash "${ROOT_DIR}/scripts/dependency_mount_cleanup_fakefs.sh" --remove-dirs "${STORAGE_DIR}"
 fi
 
 echo "[INFO] OK"

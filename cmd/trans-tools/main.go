@@ -83,7 +83,7 @@ func printMainUsage(w io.Writer) {
 
 示例:
   trans-tools -version
-  trans-tools deps --program /opt/app/bin/prog --nodes 'cn[1-32]' --port 1995
+  trans-tools deps --program /opt/app/bin/prog --nodes 'cn[1-32]' --port 2007
   trans-tools deps --program /usr/bin/python3 --nodes 'h1:19951,h2:19952' --filter-prefix /lib --insecure
 `)
 }
@@ -148,7 +148,7 @@ func runDeps(args []string) {
 	fs.StringVar(&program, "program", "", "要分析的可执行文件绝对路径")
 	fs.StringVar(&nodes, "nodes", "", "目标节点列表：nodeset（如 cn[1-3]）或 host:port 逗号列表")
 	fs.IntVar(&minSizeMB, "min-size-mb", 10, "只包含大于等于该大小（MB）的依赖文件")
-	fs.IntVar(&port, "port", 1995, "目标 agent gRPC 端口（nodes 为 host:port 时以各 host 端口为准）")
+	fs.IntVar(&port, "port", 2007, "目标 agent gRPC 端口（nodes 为 host:port 时以各 host 端口为准）")
 	fs.StringVar(&buffer, "buffer", "2M", "流传输单块大小，如 512k、1M、2M")
 	fs.IntVar(&width, "width", 50, "树形分发每层下游数量上限")
 	fs.StringVar(&destDir, "dest", "/tmp/dependencies", "远端写入依赖的根目录（agent 可用 -dest-override 覆盖）")
