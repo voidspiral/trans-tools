@@ -241,30 +241,30 @@ func runDeps(args []string) {
 	}
 }
 
-// printResult 按 ClusterShell -b 风格聚合打印分发结果：
-//   - 成功节点：按 dir 分组，折叠为 nodeset 表达式，只打印一行
-//   - 失败节点：逐条打印，包含错误信息
+// printResult 按 ClusterShell -b 风格聚合打印：
+//   - 成功：只输出总数
+//   - 失败：按错误信息聚合节点列表（折叠为 nodeset 表达式），方便复制排查
 func printResult(res deps.Result) {
 	if len(res.Details) == 0 {
 		return
 	}
 
-	// 按 dir 分组
-	type dirGroup struct {
-		okNodes   []string
-		failItems []deps.NodeResult
+	type dirStat struct {
+		okCount   int
+		failByMsg map[string][]string // msg → []nodelist
 	}
-	groups := map[string]*dirGroup{}
+	groups := map[string]*dirStat{}
 	dirOrder := []string{}
 	for _, d := range res.Details {
 		if _, exists := groups[d.Dir]; !exists {
-			groups[d.Dir] = &dirGroup{}
+			groups[d.Dir] = &dirStat{failByMsg: map[string][]string{}}
 			dirOrder = append(dirOrder, d.Dir)
 		}
+		g := groups[d.Dir]
 		if d.OK {
-			groups[d.Dir].okNodes = append(groups[d.Dir].okNodes, d.Nodelist)
+			g.okCount++
 		} else {
-			groups[d.Dir].failItems = append(groups[d.Dir].failItems, d)
+			g.failByMsg[d.Message] = append(g.failByMsg[d.Message], d.Nodelist)
 		}
 	}
 	sort.Strings(dirOrder)
@@ -272,25 +272,22 @@ func printResult(res deps.Result) {
 	fmt.Println()
 	for _, dir := range dirOrder {
 		g := groups[dir]
+		totalFail := 0
+		for _, nodes := range g.failByMsg {
+			totalFail += len(nodes)
+		}
 
-		if len(g.okNodes) > 0 {
-			folded, err := nodeset.Merge(g.okNodes...)
-			if err != nil {
-				folded = strings.Join(g.okNodes, ",")
+		fmt.Printf("  %s: %d ok, %d fail\n", dir, g.okCount, totalFail)
+
+		if totalFail > 0 {
+			for msg, nodes := range g.failByMsg {
+				folded, err := nodeset.Merge(nodes...)
+				if err != nil {
+					folded = strings.Join(nodes, ",")
+				}
+				fmt.Printf("    FAIL %s (%d): %s\n", folded, len(nodes), msg)
 			}
-			fmt.Printf("  [OK  ] dir=%-36s  nodes=%s (%d)\n", dir, folded, len(g.okNodes))
-		}
-		for _, f := range g.failItems {
-			fmt.Printf("  [FAIL] dir=%-36s  node=%s  msg=%s\n", dir, f.Nodelist, f.Message)
 		}
 	}
-
-	fmt.Printf("\n成功目录组: %d\n", len(res.SuccessNodes))
-	for _, n := range res.SuccessNodes {
-		fmt.Println("  OK :", n)
-	}
-	fmt.Printf("失败目录组: %d\n", len(res.FailedNodes))
-	for _, n := range res.FailedNodes {
-		fmt.Println("  FAIL:", n)
-	}
+	fmt.Println()
 }

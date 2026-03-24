@@ -17,5 +17,3 @@ require (
 	golang.org/x/text v0.32.0 // indirect
 	google.golang.org/genproto v0.0.0-20200526211855-cb27e3aa2013 // indirect
 )
-
-replace myclush => ./myclush
