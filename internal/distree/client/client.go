@@ -99,7 +99,7 @@ func PutStreamFile(ctx context.Context, localFile, nodesExpr string, opts Option
 	wg.Wait()
 
 	totalBlocks := int64(math.Ceil(float64(meta.size) / float64(resolveBufferSize(opts.BufferSize))))
-	fmt.Printf("\r  发送进度: %d/%d\n", totalBlocks, totalBlocks)
+	fmt.Printf("\r  Send progress: %d/%d\n", totalBlocks, totalBlocks)
 
 	return allReplies, nil
 }

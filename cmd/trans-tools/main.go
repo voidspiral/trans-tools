@@ -1,4 +1,4 @@
-// trans-tools 命令行入口
+// trans-tools CLI entrypoint
 package main
 
 import (
@@ -38,7 +38,7 @@ func main() {
 	fs.SetOutput(os.Stderr)
 	fs.Usage = func() { printMainUsage(os.Stderr) }
 
-	showVersion := fs.Bool("version", false, "显示版本信息（构建时间、Git commit）")
+	showVersion := fs.Bool("version", false, "show version information (build time, Git commit)")
 
 	for _, a := range args {
 		if a == "-h" || a == "--help" {
@@ -57,7 +57,7 @@ func main() {
 	}
 
 	if rest := fs.Args(); len(rest) > 0 {
-		fmt.Fprintf(os.Stderr, "未知子命令或多余参数: %s\n\n", strings.Join(rest, " "))
+		fmt.Fprintf(os.Stderr, "unknown subcommand or extra arguments: %s\n\n", strings.Join(rest, " "))
 		printMainUsage(os.Stderr)
 		os.Exit(2)
 	}
@@ -67,21 +67,22 @@ func main() {
 }
 
 func printMainUsage(w io.Writer) {
-	fmt.Fprintf(w, `trans-tools — 程序依赖分析 + 多节点树形分发
+	fmt.Fprintf(w, `trans-tools — dependency analysis + tree distribution
 
-用法:
-  trans-tools [全局选项]
-  trans-tools deps [选项]
+Usage:
+  trans-tools [global options]
+  trans-tools deps [options]
 
-全局选项:
-  -version       显示版本信息
-  -h, --help     显示本帮助
+Global options:
+  -version       show version information
+  -h, --help     show this help
 
-子命令:
-  deps           分析可执行文件依赖，按目录打 tar，经 gRPC 树形分发到目标节点
-                 详见: trans-tools deps -h
+Subcommands:
+  deps           analyze executable dependencies, pack by directory, and
+                 distribute by gRPC tree to target nodes
+                 see: trans-tools deps -h
 
-示例:
+Examples:
   trans-tools -version
   trans-tools deps --program /opt/app/bin/prog --nodes 'cn[1-32]' --port 2007
   trans-tools deps --program /usr/bin/python3 --nodes 'h1:19951,h2:19952' --filter-prefix /lib --insecure
@@ -89,26 +90,28 @@ func printMainUsage(w io.Writer) {
 }
 
 func printDepsUsage(w io.Writer, fs *flag.FlagSet) {
-	fmt.Fprintf(w, `用法: trans-tools deps [选项]
+	fmt.Fprintf(w, `Usage: trans-tools deps [options]
 
-分析 --program 指定程序的共享库等依赖，按目录分组打包为本地临时 tar（默认目录: /tmp/trans-tools-deps*），
-再向 --nodes 所列节点上的 agent 做树形分发，文件落在各节点 --dest 指定目录（或由 agent 的 -dest-override 覆盖）。
+Analyze dependencies of --program, pack by directory to local temporary tar files
+(default: /tmp/trans-tools-deps*), then distribute by tree to agents listed in
+--nodes. Files are written under --dest on each node (or overridden by agent -dest-override).
 
-必填:
-  -program string    待分析程序的绝对路径
-  -nodes string      目标节点：nodeset 表达式（如 cn[1-3]）或逗号分隔的 host[:port]（端口与 agent 监听一致）
+Required:
+  -program string    absolute path of executable to analyze
+  -nodes string      target nodes: nodeset expression (e.g. cn[1-3]) or
+                     comma-separated host[:port] list
 
-可选:
+Options:
 `)
 	fs.SetOutput(w)
 	fs.PrintDefaults()
 	fmt.Fprintf(w, `
-说明:
-  -filter-prefix     多个目录用英文逗号分隔；传空字符串 "" 表示不按路径前缀筛选（使用全部依赖）。
-  -auto-clean        为 true（默认）时，分发结束后删除本地临时 tar 目录；调试可设 -auto-clean=false。
-  -insecure          关闭 TLS，仅用于测试；生产环境 agent 与客户端需一致配置。
+Notes:
+  -filter-prefix     use comma-separated prefixes; pass "" to disable prefix filtering.
+  -auto-clean        true by default; remove local temporary tar directory after distribution.
+  -insecure          disable TLS for testing only; client/agent settings must match.
 
-示例:
+Examples:
   trans-tools deps --program /bin/myapp --nodes 'cn[1-100]' --dest /data/deps --filter-prefix /vol8
   trans-tools deps --program /bin/tool --nodes 'n1,n2,n3' --width 32 --buffer 4M --min-size-mb 5
 `)
@@ -145,16 +148,16 @@ func runDeps(args []string) {
 		insecure     bool
 	)
 
-	fs.StringVar(&program, "program", "", "要分析的可执行文件绝对路径")
-	fs.StringVar(&nodes, "nodes", "", "目标节点列表：nodeset（如 cn[1-3]）或 host:port 逗号列表")
-	fs.IntVar(&minSizeMB, "min-size-mb", 10, "只包含大于等于该大小（MB）的依赖文件")
-	fs.IntVar(&port, "port", 2007, "目标 agent gRPC 端口（nodes 为 host:port 时以各 host 端口为准）")
-	fs.StringVar(&buffer, "buffer", "2M", "流传输单块大小，如 512k、1M、2M")
-	fs.IntVar(&width, "width", 50, "树形分发每层下游数量上限")
-	fs.StringVar(&destDir, "dest", "/tmp/dependencies", "远端写入依赖的根目录（agent 可用 -dest-override 覆盖）")
-	fs.StringVar(&filterPrefix, "filter-prefix", "/vol8", "只打包路径具有此前缀的依赖；逗号多前缀；空字符串表示不筛选")
-	fs.BoolVar(&autoClean, "auto-clean", true, "结束后是否删除本地临时 tar 目录（/tmp/trans-tools-deps*）")
-	fs.BoolVar(&insecure, "insecure", false, "关闭 gRPC TLS（仅测试，须与 agent 一致）")
+	fs.StringVar(&program, "program", "", "absolute path of executable to analyze")
+	fs.StringVar(&nodes, "nodes", "", "target nodes: nodeset (e.g. cn[1-3]) or host:port comma list")
+	fs.IntVar(&minSizeMB, "min-size-mb", 10, "include only dependencies with size >= this value (MB)")
+	fs.IntVar(&port, "port", 2007, "target agent gRPC port (host:port entries override this default)")
+	fs.StringVar(&buffer, "buffer", "2M", "stream payload size per chunk, e.g. 512k, 1M, 2M")
+	fs.IntVar(&width, "width", 50, "max fan-out per tree layer")
+	fs.StringVar(&destDir, "dest", "/tmp/dependencies", "destination root directory on remote nodes")
+	fs.StringVar(&filterPrefix, "filter-prefix", "/vol8", "dependency path prefixes to include; comma-separated, empty string disables filter")
+	fs.BoolVar(&autoClean, "auto-clean", true, "remove local temporary tar directory after distribution")
+	fs.BoolVar(&insecure, "insecure", false, "disable gRPC TLS (testing only, must match agent)")
 
 	fs.Usage = func() { printDepsUsage(os.Stderr, fs) }
 
@@ -174,53 +177,53 @@ func runDeps(args []string) {
 	}
 
 	if insecure {
-		fmt.Println("WARNING: 使用 insecure 传输模式，仅适用于测试环境")
+		fmt.Println("WARNING: insecure transport mode enabled (testing only)")
 	}
 
-	fmt.Println("== 步骤 1: 分析程序依赖 ==")
+	fmt.Println("== Step 1: Analyze program dependencies ==")
 	allDeps, err := deps.AnalyzeDependencies(program, minSizeMB)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "依赖分析失败:", err)
+		fmt.Fprintln(os.Stderr, "dependency analysis failed:", err)
 		os.Exit(1)
 	}
 	if len(allDeps) == 0 {
-		fmt.Println("未找到符合条件的依赖文件，直接退出。")
+		fmt.Println("No dependency files matched filters. Exit.")
 		return
 	}
 
 	var filtered []deps.DepFile
 	prefixes := parseFilterPrefixes(filterPrefix)
 	if len(prefixes) == 0 {
-		fmt.Println("== 步骤 2: 不按目录筛选，使用全部依赖 ==")
+		fmt.Println("== Step 2: Use all dependencies (no prefix filter) ==")
 		filtered = allDeps
 	} else {
-		fmt.Printf("== 步骤 2: 筛选指定目录下的依赖: %s ==\n", strings.Join(prefixes, ", "))
+		fmt.Printf("== Step 2: Filter dependencies by prefixes: %s ==\n", strings.Join(prefixes, ", "))
 		filtered = deps.FilterByPrefixes(allDeps, prefixes)
 		if len(filtered) == 0 {
-			fmt.Println("未找到指定目录下的依赖，使用全部依赖。")
+			fmt.Println("No dependencies matched prefixes. Fallback to all dependencies.")
 			filtered = allDeps
 		}
 	}
 
-	fmt.Println("== 步骤 3: 按目录分组并打包 ==")
+	fmt.Println("== Step 3: Group and pack dependencies by directory ==")
 	groups := deps.GroupByDir(filtered)
 	packResult, err := deps.PackByDir(groups)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "打包失败:", err)
+		fmt.Fprintln(os.Stderr, "pack failed:", err)
 		os.Exit(1)
 	}
 	if autoClean {
 		defer packResult.Close()
 	}
 	if len(packResult.TarFiles) == 0 {
-		fmt.Println("没有需要分发的 tar 包，直接退出。")
+		fmt.Println("No tar package to distribute. Exit.")
 		return
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 
-	fmt.Println("== 步骤 4: 通过树形分发传输 tar 包 ==")
+	fmt.Println("== Step 4: Distribute tar files by tree ==")
 	res, err := deps.DistributeTarTrees(ctx, packResult.TarFiles, nodes, deps.Options{
 		Port:        port,
 		Width:       width,
@@ -230,20 +233,20 @@ func runDeps(args []string) {
 		Insecure:    insecure,
 	})
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "分发失败:", err)
+		fmt.Fprintln(os.Stderr, "distribution failed:", err)
 		os.Exit(1)
 	}
 
-	fmt.Println("== 步骤 5: 结果汇总 ==")
+	fmt.Println("== Step 5: Summary ==")
 	printResult(res)
 	if len(res.FailedNodes) > 0 {
 		os.Exit(1)
 	}
 }
 
-// printResult 按 ClusterShell -b 风格聚合打印：
-//   - 成功：只输出总数
-//   - 失败：按错误信息聚合节点列表（折叠为 nodeset 表达式），方便复制排查
+// printResult prints ClusterShell-style aggregated output:
+//   - success: only counts
+//   - failures: grouped by error message with folded nodeset lists
 func printResult(res deps.Result) {
 	if len(res.Details) == 0 {
 		return
@@ -251,7 +254,7 @@ func printResult(res deps.Result) {
 
 	type dirStat struct {
 		okCount   int
-		failByMsg map[string][]string // msg → []nodelist
+		failByMsg map[string][]string // msg -> []nodelist
 	}
 	groups := map[string]*dirStat{}
 	dirOrder := []string{}
