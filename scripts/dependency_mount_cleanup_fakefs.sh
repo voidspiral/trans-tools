@@ -4,6 +4,7 @@
 # 目标：
 #   - 卸载由 dependency_mount_fakefs.sh 创建的 FUSE 挂载点（mountpoint=业务目录）
 #   - 清理 upper 目录内容（可选删除整个 .fakefs 状态目录）
+#   - 若依赖存放目录 STORAGE_DIR 本身是挂载点，最后对其卸载（常见于 Slurm 下 bind 到每作业路径）
 #
 # 用法：
 #   sudo ./dependency_mount_cleanup_fakefs.sh
@@ -42,8 +43,17 @@ unmount_one() {
   fi
 }
 
+unmount_storage_dir_if_mounted() {
+  if mountpoint -q "${STORAGE_DIR}" 2>/dev/null; then
+    echo "[INFO] 卸载依赖存放目录挂载: ${STORAGE_DIR}"
+    unmount_one "${STORAGE_DIR}"
+  fi
+}
+
 if [[ ! -d "${BASE_DIR}" ]]; then
-  echo "[INFO] 状态目录不存在: ${BASE_DIR}，无需清理"
+  echo "[INFO] 状态目录不存在: ${BASE_DIR}，跳过按 state 卸载"
+  unmount_storage_dir_if_mounted
+  echo "[INFO] 清理完成（fakefs 模式）"
   exit 0
 fi
 
@@ -71,6 +81,8 @@ if [[ "${REMOVE_DIRS}" -eq 1 && -d "${BASE_DIR}" ]]; then
   echo "[INFO] 删除 ${BASE_DIR} 下的所有目录"
   rm -rf "${BASE_DIR:?}/"* 2>/dev/null || true
 fi
+
+unmount_storage_dir_if_mounted
 
 echo "[INFO] 清理完成（fakefs 模式）"
 

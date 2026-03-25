@@ -8,6 +8,9 @@
 set -euo pipefail
 
 FAKEFS_BIN="${FAKEFS_BIN:-fakefs}"
+MOUNT_TIMEOUT_SEC="${FAKEFS_MOUNT_TIMEOUT_SEC:-15}"
+STRICT_MODE="${FAKEFS_STRICT_MODE:-1}"
+AGENT_DEBUG_LOG_PATH="${AGENT_DEBUG_LOG_PATH:-}"
 
 usage() {
   cat <<EOF
@@ -29,6 +32,7 @@ debug_log() {
 }
 
 agent_debug_log() {
+  [[ -z "${AGENT_DEBUG_LOG_PATH}" ]] && return 0
   local hypothesis_id="$1"
   local location="$2"
   local message="$3"
@@ -56,6 +60,11 @@ unmount_one() {
 is_fakefs_mounted() {
   local mp="$1"
   mount | awk -v m="$mp" '($1=="fakefs" || $1=="fakeFS" || $5=="fuse.fakefs" || $5=="fuse.fakeFS") && $3==m {found=1} END{exit(found?0:1)}'
+}
+
+mount_fstype_at() {
+  local mp="$1"
+  findmnt -T "${mp}" -n -o FSTYPE 2>/dev/null || echo unknown
 }
 
 if ! command -v "${FAKEFS_BIN}" >/dev/null 2>&1; then
@@ -96,7 +105,6 @@ else
 fi
 
 DEBUG_LOG_PATH="${STORAGE_DIR}/debug.log"
-AGENT_DEBUG_LOG_PATH="/home/code/trans-tools/.cursor/debug.log"
 BASE_DIR="${FAKEFS_STATE_DIR:-${STORAGE_DIR}/.fakefs}"
 
 echo "[INFO] 使用依赖存放目录: ${STORAGE_DIR}"
@@ -119,6 +127,7 @@ fi
 agent_debug_log "H1" "dependency_mount_fakefs.sh:entry" "prolog script entry env snapshot" "{\"uid\":\"$(id -u)\",\"user\":\"$(id -un 2>/dev/null || echo unknown)\",\"slurmJobId\":\"${SLURM_JOB_ID:-}\",\"slurmStepId\":\"${SLURM_STEP_ID:-}\",\"slurmNode\":\"${SLURMD_NODENAME:-}\",\"ldLibraryPath\":\"${LD_LIBRARY_PATH:-}\",\"storageDir\":\"${STORAGE_DIR}\"}"
 
 mkdir -p "${BASE_DIR}"
+overall_failed=0
 
 for tar_path in "${tar_files[@]}"; do
   tar_name="$(basename "${tar_path}")"
@@ -131,23 +140,32 @@ for tar_path in "${tar_files[@]}"; do
 
   if [[ -z "${directory}" || "${directory}" != /* ]]; then
     echo "[ERROR] 无法从 ${tar_name} 推导合法目录，跳过"
+    overall_failed=1
     continue
   fi
 
-  overlay_name="${directory#/}"
-  overlay_name="${overlay_name//\//_}"
-  state_file="${BASE_DIR}/${overlay_name}.state"
+  # 由业务路径生成的唯一键，仅用于 .state 与 fakefs upper 工作目录的文件名
+  path_key="${directory#/}"
+  path_key="${path_key//\//_}"
+  state_file="${BASE_DIR}/${path_key}.state"
   lower_dir="${directory}"
   mountpoint="${directory}"
-  upper_dir="${BASE_DIR}/${overlay_name}_upper"
+  upper_dir="${BASE_DIR}/${path_key}_upper"
   mkdir -p "${upper_dir}"
 
   if is_fakefs_mounted "${mountpoint}"; then
     echo "[INFO] 检测到业务路径已挂载 fakefs，先卸载: ${mountpoint}"
     unmount_one "${mountpoint}"
   elif mountpoint -q "${mountpoint}" 2>/dev/null; then
-    echo "[INFO] 检测到业务路径存在挂载，尝试卸载: ${mountpoint}"
-    umount -l "${mountpoint}" 2>/dev/null || true
+    existing_fstype="$(mount_fstype_at "${mountpoint}")"
+    if [[ "${existing_fstype}" == "fuse.fakefs" || "${existing_fstype}" == "fuse.fakeFS" ]]; then
+      echo "[INFO] 检测到业务路径存在 fakefs 挂载，尝试卸载: ${mountpoint}"
+      umount -l "${mountpoint}" 2>/dev/null || true
+    else
+      echo "[ERROR] 业务路径已存在非 fakefs 挂载（${existing_fstype}），拒绝卸载: ${mountpoint}"
+      overall_failed=1
+      continue
+    fi
   fi
 
   echo "[INFO] 清理 upperdir: ${upper_dir}"
@@ -155,12 +173,14 @@ for tar_path in "${tar_files[@]}"; do
 
   if [[ ! -f "${tar_path}" ]]; then
     echo "[ERROR] tar 文件不存在: ${tar_path}"
+    overall_failed=1
     continue
   fi
 
   echo "[INFO] 解压 tar: ${tar_path} -> ${upper_dir}"
   if ! tar xf "${tar_path}" -C "${upper_dir}"; then
     echo "[ERROR] 解压失败: ${tar_path}"
+    overall_failed=1
     continue
   fi
 
@@ -182,9 +202,24 @@ for tar_path in "${tar_files[@]}"; do
   fi
 
   echo "[INFO] fakefs: lowerdir=${lower_dir}, upperdir=${upper_dir}, mountpoint=${mountpoint}"
-  if ! "${FAKEFS_BIN}" -l "${lower_dir}" -u "${upper_dir}" "${mountpoint}"; then
-    echo "[ERROR] fakefs 挂载失败: ${mountpoint}"
-    continue
+  if command -v timeout >/dev/null 2>&1; then
+    if timeout "${MOUNT_TIMEOUT_SEC}" "${FAKEFS_BIN}" -l "${lower_dir}" -u "${upper_dir}" "${mountpoint}"; then
+      :
+    else
+      rc=$?
+      echo "[ERROR] fakefs 挂载失败或超时（rc=${rc}）: ${mountpoint}"
+      overall_failed=1
+      continue
+    fi
+  else
+    if "${FAKEFS_BIN}" -l "${lower_dir}" -u "${upper_dir}" "${mountpoint}"; then
+      :
+    else
+      rc=$?
+      echo "[ERROR] fakefs 挂载失败（rc=${rc}）: ${mountpoint}"
+      overall_failed=1
+      continue
+    fi
   fi
 
   mnt_fstype="$(findmnt -T "${mountpoint}" -n -o FSTYPE 2>/dev/null || echo unknown)"
@@ -202,3 +237,7 @@ EOF
 done
 
 echo "[INFO] 所有 tar 处理完成（fakefs 模式）"
+if [[ "${STRICT_MODE}" == "1" && "${overall_failed}" -ne 0 ]]; then
+  echo "[ERROR] 存在失败项，严格模式返回非 0"
+  exit 1
+fi

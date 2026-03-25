@@ -1,5 +1,4 @@
 // Package nodeutil 提供节点列表的解析与分组工具，供 distree 客户端和服务端使用。
-// 不引用 myclush 任何包。
 package nodeutil
 
 import (
@@ -9,38 +8,37 @@ import (
 )
 
 // NodeAddr 表示一个节点及其可选端口。
-// 若 Port 为空，调用方应使用协议级别的默认端口。
 type NodeAddr struct {
 	Host string
-	Port string // 空表示使用默认端口
+	Port string
 }
 
 // Expand 将逗号分隔或 nodeset 表达式展开为 NodeAddr 列表。
 // 支持两种格式（可混用）：
-//   - "cn1,cn2,cn3"         → 各节点 Port 为空，使用默认端口
-//   - "cn1:19951,cn2:19952" → 各节点使用指定端口（单机多端口测试场景）
+//   - "cn[1-3,5-7]"           → nodeset 展开，Port 为空
+//   - "cn1:19951,cn2:19952"   → 各节点使用指定端口（单机测试场景）
+//   - "cn[1-3]:2007"          → nodeset 展开后每个节点统一使用 2007
+//   - 混合 "cn[1-3],h1:8080" → 分段处理
 //
-// nodeset 表达式（如 "cn[1-3]"）展开后所有节点 Port 均为空。
+// 逗号是顶层分隔符，但方括号内的逗号不拆分（与 ClusterShell 一致）。
 func Expand(expr string) []NodeAddr {
 	expr = strings.TrimSpace(expr)
 	if expr == "" {
 		return nil
 	}
 
-	// 先按逗号切分，逐段判断是否含端口
-	parts := splitRaw(expr)
+	segments := splitTopLevel(expr)
 	var addrs []NodeAddr
-	for _, part := range parts {
-		if idx := strings.LastIndex(part, ":"); idx > 0 {
-			// 含冒号且冒号后看起来是端口（纯数字）
-			host, port := part[:idx], part[idx+1:]
-			if isPort(port) {
-				addrs = append(addrs, NodeAddr{Host: host, Port: port})
-				continue
+	for _, seg := range segments {
+		// 检查是否有 host:port 格式（冒号在方括号外、且冒号后面是纯数字）
+		if host, port, ok := splitHostPort(seg); ok {
+			expanded := expandNodeset(host)
+			for _, h := range expanded {
+				addrs = append(addrs, NodeAddr{Host: h, Port: port})
 			}
+			continue
 		}
-		// 没有端口：尝试 nodeset 展开
-		expanded := expandNodeset(part)
+		expanded := expandNodeset(seg)
 		for _, h := range expanded {
 			addrs = append(addrs, NodeAddr{Host: h, Port: ""})
 		}
@@ -48,7 +46,7 @@ func Expand(expr string) []NodeAddr {
 	return addrs
 }
 
-// Hosts 从 NodeAddr 列表中提取纯主机名（不含端口）。
+// Hosts 从 NodeAddr 列表中提取纯主机名。
 func Hosts(addrs []NodeAddr) []string {
 	out := make([]string, len(addrs))
 	for i, a := range addrs {
@@ -58,7 +56,6 @@ func Hosts(addrs []NodeAddr) []string {
 }
 
 // SplitByWidth 将 NodeAddr 列表按宽度 width 分成多组。
-// 每组由"第一个节点"作为下一跳网关，其余节点继续在该节点的 nodelist 中下传。
 func SplitByWidth(addrs []NodeAddr, width int) [][]NodeAddr {
 	if width <= 0 {
 		width = 1
@@ -75,7 +72,6 @@ func SplitByWidth(addrs []NodeAddr, width int) [][]NodeAddr {
 }
 
 // Join 将 NodeAddr 列表重新序列化为逗号分隔字符串，保留端口信息。
-// Host 为空的 NodeAddr 会被跳过。
 func Join(addrs []NodeAddr) string {
 	var parts []string
 	for _, a := range addrs {
@@ -101,30 +97,73 @@ func ResolvePort(addr NodeAddr, defaultPort string) string {
 
 // --------- 私有辅助 ---------
 
-// splitRaw 按逗号切分，但跳过空段；不做 nodeset 展开。
-func splitRaw(s string) []string {
-	var out []string
-	for _, part := range strings.Split(s, ",") {
-		if v := strings.TrimSpace(part); v != "" {
-			out = append(out, v)
+// splitTopLevel 按顶层逗号切分字符串，方括号内的逗号不拆分。
+// 例如 "cn[1-3,5],h1:8080" → ["cn[1-3,5]", "h1:8080"]
+func splitTopLevel(s string) []string {
+	var result []string
+	depth := 0
+	start := 0
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '[':
+			depth++
+		case ']':
+			if depth > 0 {
+				depth--
+			}
+		case ',':
+			if depth == 0 {
+				seg := strings.TrimSpace(s[start:i])
+				if seg != "" {
+					result = append(result, seg)
+				}
+				start = i + 1
+			}
 		}
 	}
-	return out
+	if seg := strings.TrimSpace(s[start:]); seg != "" {
+		result = append(result, seg)
+	}
+	return result
+}
+
+// splitHostPort 尝试将 "expr:port" 拆分，其中 port 是纯数字且冒号在方括号外。
+// "cn[1-3]:2007" → ("cn[1-3]", "2007", true)
+// "cn[1-3]"      → ("", "", false)
+// "cn[1-3,5:7]"  → ("", "", false)  冒号在括号内
+func splitHostPort(s string) (host, port string, ok bool) {
+	depth := 0
+	lastColon := -1
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '[':
+			depth++
+		case ']':
+			if depth > 0 {
+				depth--
+			}
+		case ':':
+			if depth == 0 {
+				lastColon = i
+			}
+		}
+	}
+	if lastColon <= 0 || lastColon >= len(s)-1 {
+		return "", "", false
+	}
+	p := s[lastColon+1:]
+	if !isPort(p) {
+		return "", "", false
+	}
+	return s[:lastColon], p, true
 }
 
 func expandNodeset(s string) []string {
-	iter, err := nodeset.Yield(s)
-	if err != nil || iter == nil {
+	ns, err := nodeset.Expand(s)
+	if err != nil || len(ns) == 0 {
 		return []string{s}
 	}
-	var nodes []string
-	for iter.Next() {
-		nodes = append(nodes, iter.Value())
-	}
-	if len(nodes) == 0 {
-		return []string{s}
-	}
-	return nodes
+	return ns
 }
 
 func isPort(s string) bool {
