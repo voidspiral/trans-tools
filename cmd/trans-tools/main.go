@@ -245,8 +245,8 @@ func runDeps(args []string) {
 }
 
 // printResult prints ClusterShell-style aggregated output:
-//   - success: only counts
-//   - failures: grouped by error message with folded nodeset lists
+//   - success: total count only
+//   - failures: all failed nodes per dir folded into a single nodeset expression
 func printResult(res deps.Result) {
 	if len(res.Details) == 0 {
 		return
@@ -254,20 +254,20 @@ func printResult(res deps.Result) {
 
 	type dirStat struct {
 		okCount   int
-		failByMsg map[string][]string // msg -> []nodelist
+		failNodes []string
 	}
 	groups := map[string]*dirStat{}
 	dirOrder := []string{}
 	for _, d := range res.Details {
 		if _, exists := groups[d.Dir]; !exists {
-			groups[d.Dir] = &dirStat{failByMsg: map[string][]string{}}
+			groups[d.Dir] = &dirStat{}
 			dirOrder = append(dirOrder, d.Dir)
 		}
 		g := groups[d.Dir]
 		if d.OK {
 			g.okCount++
 		} else {
-			g.failByMsg[d.Message] = append(g.failByMsg[d.Message], d.Nodelist)
+			g.failNodes = append(g.failNodes, d.Nodelist)
 		}
 	}
 	sort.Strings(dirOrder)
@@ -275,21 +275,14 @@ func printResult(res deps.Result) {
 	fmt.Println()
 	for _, dir := range dirOrder {
 		g := groups[dir]
-		totalFail := 0
-		for _, nodes := range g.failByMsg {
-			totalFail += len(nodes)
-		}
-
-		fmt.Printf("  %s: %d ok, %d fail\n", dir, g.okCount, totalFail)
-
-		if totalFail > 0 {
-			for msg, nodes := range g.failByMsg {
-				folded, err := nodeset.Merge(nodes...)
-				if err != nil {
-					folded = strings.Join(nodes, ",")
-				}
-				fmt.Printf("    FAIL %s (%d): %s\n", folded, len(nodes), msg)
+		nFail := len(g.failNodes)
+		fmt.Printf("  %s: %d ok, %d fail\n", dir, g.okCount, nFail)
+		if nFail > 0 {
+			folded, err := nodeset.Merge(g.failNodes...)
+			if err != nil {
+				folded = strings.Join(g.failNodes, ",")
 			}
+			fmt.Printf("    FAIL %s\n", folded)
 		}
 	}
 	fmt.Println()
