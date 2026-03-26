@@ -10,12 +10,21 @@
 #   sudo ./dependency_mount_cleanup_fakefs.sh
 #   sudo ./dependency_mount_cleanup_fakefs.sh --remove-dirs
 #   sudo ./dependency_mount_cleanup_fakefs.sh --remove-dirs /path/to/dependencies
+#
+# 默认行为：
+#   - 清理完成后会删除 STORAGE_DIR 本身（rm -rf）。
+#   - 如需保留依赖目录用于调试，加 --keep-storage。
 
 set -euo pipefail
 
 REMOVE_DIRS=0
+KEEP_STORAGE=0
 if [[ "${1:-}" == "--remove-dirs" ]]; then
   REMOVE_DIRS=1
+  shift
+fi
+if [[ "${1:-}" == "--keep-storage" ]]; then
+  KEEP_STORAGE=1
   shift
 fi
 
@@ -50,9 +59,26 @@ unmount_storage_dir_if_mounted() {
   fi
 }
 
+purge_storage_dir() {
+  if [[ "${KEEP_STORAGE}" -eq 1 ]]; then
+    echo "[INFO] 保留依赖存放目录（--keep-storage）: ${STORAGE_DIR}"
+    return 0
+  fi
+  if [[ -z "${STORAGE_DIR}" || "${STORAGE_DIR}" == "/" || "${STORAGE_DIR}" == "/tmp" ]]; then
+    echo "[ERROR] 拒绝删除危险目录: ${STORAGE_DIR}"
+    return 1
+  fi
+  if [[ ! -e "${STORAGE_DIR}" ]]; then
+    return 0
+  fi
+  echo "[INFO] 删除依赖存放目录: ${STORAGE_DIR}"
+  rm -rf "${STORAGE_DIR}"
+}
+
 if [[ ! -d "${BASE_DIR}" ]]; then
   echo "[INFO] 状态目录不存在: ${BASE_DIR}，跳过按 state 卸载"
   unmount_storage_dir_if_mounted
+  purge_storage_dir
   echo "[INFO] 清理完成（fakefs 模式）"
   exit 0
 fi
@@ -83,6 +109,7 @@ if [[ "${REMOVE_DIRS}" -eq 1 && -d "${BASE_DIR}" ]]; then
 fi
 
 unmount_storage_dir_if_mounted
+purge_storage_dir
 
 echo "[INFO] 清理完成（fakefs 模式）"
 
