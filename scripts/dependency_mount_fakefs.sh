@@ -4,6 +4,12 @@
 #   1. 依赖 *_so.tar 放在 STORAGE_DIR（默认 /tmp/dependencies）
 #   2. 从文件名恢复目录（如 zvol8zhomezuserzapp_so.tar -> /vol8/home/user/app）
 #   3. upperdir 解压 tar；lowerdir=业务目录；mountpoint=业务目录（同路径挂载）
+#
+# Slurm Prolog: when SLURM_JOB_ID is set (or SLURM_HOOK_SOFT_FAIL=1), the script exits 0
+# even on failures so the node is not drained; errors go to ${STORAGE_DIR}/hook-errors.log
+# and syslog (logger -t slurm-fakefs-hook). Set SLURM_HOOK_SOFT_FAIL=0 under Slurm to
+# keep strict non-zero exits. Without SLURM_JOB_ID, behavior stays fail-fast unless
+# SLURM_HOOK_SOFT_FAIL=1 (for tests).
 
 set -euo pipefail
 
@@ -20,6 +26,48 @@ usage() {
 
 未指定 STORAGE_DIR：Slurm 用 DEPENDENCY_STORAGE_DIR，否则 /tmp/dependencies。
 EOF
+}
+
+slurm_hook_soft_fail() {
+  [[ "${SLURM_HOOK_SOFT_FAIL:-}" == "0" ]] && return 1
+  [[ -n "${SLURM_JOB_ID:-}" ]] && return 0
+  [[ "${SLURM_HOOK_SOFT_FAIL:-}" == "1" ]] && return 0
+  return 1
+}
+
+log_hook_error() {
+  local reason="$1"
+  local msg="$2"
+  local ts line logf
+  ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date '+%Y-%m-%dT%H:%M:%S')"
+  line="ERROR reason=${reason} time=${ts} job=${SLURM_JOB_ID:-} node=${SLURMD_NODENAME:-$(hostname 2>/dev/null || echo unknown)} msg=${msg}"
+  echo "${line}" >&2
+  logf="${STORAGE_DIR:-}/hook-errors.log"
+  if [[ -n "${STORAGE_DIR:-}" ]]; then
+    mkdir -p "${STORAGE_DIR}" 2>/dev/null || true
+    echo "${line}" >> "${logf}" 2>/dev/null || true
+  fi
+  if command -v logger >/dev/null 2>&1; then
+    logger -t slurm-fakefs-hook -- "${line}" 2>/dev/null || true
+  fi
+}
+
+soft_fail_or_exit() {
+  local code="$1"
+  local reason="$2"
+  local msg="$3"
+  if slurm_hook_soft_fail; then
+    log_hook_error "${reason}" "${msg}"
+    exit 0
+  fi
+  exit "${code}"
+}
+
+_hook_err_trap() {
+  local ec=$?
+  trap - ERR
+  log_hook_error "ERR" "unexpected failure exit_code=${ec}"
+  exit 0
 }
 
 debug_log() {
@@ -67,12 +115,6 @@ mount_fstype_at() {
   findmnt -T "${mp}" -n -o FSTYPE 2>/dev/null || echo unknown
 }
 
-if ! command -v "${FAKEFS_BIN}" >/dev/null 2>&1; then
-  echo "[ERROR] 未找到 fakefs 可执行文件：${FAKEFS_BIN}"
-  echo "       请确保已构建并将其加入 PATH，或通过 FAKEFS_BIN 覆盖路径。"
-  exit 1
-fi
-
 STORAGE_DIR_CLI=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -83,12 +125,12 @@ while [[ $# -gt 0 ]]; do
     -*)
       echo "[ERROR] 未知选项: $1" >&2
       usage >&2
-      exit 1
+      soft_fail_or_exit 1 "BAD_CLI" "unknown option: $1"
       ;;
     *)
       if [[ -n "${STORAGE_DIR_CLI}" ]]; then
         echo "[ERROR] 多余的目录参数: $1" >&2
-        exit 1
+        soft_fail_or_exit 1 "BAD_CLI" "extra directory argument: $1"
       fi
       STORAGE_DIR_CLI="$1"
       shift
@@ -102,6 +144,16 @@ elif [[ -n "${SLURM_JOB_ID:-}" ]]; then
   STORAGE_DIR="${DEPENDENCY_STORAGE_DIR:-/tmp/dependencies}"
 else
   STORAGE_DIR="/tmp/dependencies"
+fi
+
+if slurm_hook_soft_fail; then
+  trap '_hook_err_trap' ERR
+fi
+
+if ! command -v "${FAKEFS_BIN}" >/dev/null 2>&1; then
+  echo "[ERROR] 未找到 fakefs 可执行文件：${FAKEFS_BIN}"
+  echo "       请确保已构建并将其加入 PATH，或通过 FAKEFS_BIN 覆盖路径。"
+  soft_fail_or_exit 1 "MISSING_FAKEFS" "fakefs not found: ${FAKEFS_BIN}"
 fi
 
 DEBUG_LOG_PATH="${STORAGE_DIR}/debug.log"
@@ -239,5 +291,9 @@ done
 echo "[INFO] 所有 tar 处理完成（fakefs 模式）"
 if [[ "${STRICT_MODE}" == "1" && "${overall_failed}" -ne 0 ]]; then
   echo "[ERROR] 存在失败项，严格模式返回非 0"
+  if slurm_hook_soft_fail; then
+    log_hook_error "STRICT_AGGREGATE" "one or more mount steps failed (FAKEFS_STRICT_MODE=1)"
+    exit 0
+  fi
   exit 1
 fi
