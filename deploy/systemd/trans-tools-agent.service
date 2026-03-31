@@ -1,0 +1,21 @@
+[Unit]
+Description=Trans Tools DistTree Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/yourpath/trans-tools
+ExecStart=/yourpath/bin/agent -port 2007  --insecure
+Restart=always
+RestartSec=3
+LimitNOFILE=65535
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=false
+
+[Install]
+WantedBy=multi-user.target

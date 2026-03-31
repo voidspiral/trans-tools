@@ -126,6 +126,50 @@ go build -o bin/agent ./cmd/agent
 ./bin/agent -port 2007 -tmp-name deps-cn1 -dest-override /local/dependencies
 ```
 
+### `wrappersrun` (script)
+
+Use `scripts/wrappersrun.sh` to keep the same `srun` usage while running fixed `trans-tools deps` first, then `srun`.
+
+```bash
+scripts/wrappersrun.sh -N 2 -n 64 /path/to/your_prog --arg1 x
+```
+
+Fixed deps parameters can be configured by environment variables:
+
+```bash
+export WRAPPERSRUN_DEPS_NODES='cn[1-32]'          # default: SLURM_NODELIST
+export WRAPPERSRUN_DEPS_DEST='/tmp/dependencies'
+export WRAPPERSRUN_DEPS_FILTER_PREFIX='/vol8'
+export WRAPPERSRUN_DEPS_PORT='2007'
+export WRAPPERSRUN_DEPS_WIDTH='50'
+export WRAPPERSRUN_DEPS_BUFFER='2M'
+export WRAPPERSRUN_DEPS_MIN_SIZE_MB='10'
+scripts/wrappersrun.sh -N 2 -n 64 /path/to/your_prog
+```
+
+### Slurm Prolog / Epilog (`dependency_mount_fakefs.sh`)
+
+Use `scripts/dependency_mount_fakefs.sh` as **Prolog** and `scripts/dependency_mount_cleanup_fakefs.sh` as **Epilog** so per-job dependencies are mounted and torn down on compute nodes.
+
+Example `slurm.conf` snippets (paths must exist and be executable on compute nodes):
+
+```ini
+Prolog=/shared/trans-tools/scripts/dependency_mount_fakefs.sh
+Epilog=/shared/trans-tools/scripts/dependency_mount_cleanup_fakefs.sh
+```
+
+Behavior when **`SLURM_JOB_ID` is set** (normal Prolog/Epilog): scripts **exit 0** even if mounts, cleanup, or strict checks fail, so Slurm does not drain the node solely because of hook exit status. Failures are written to **`${DEPENDENCY_STORAGE_DIR:-/tmp/dependencies}/hook-errors.log`** (and to syslog via `logger -t slurm-fakefs-hook` when available).
+
+- Override dependency directory for Slurm jobs: set **`DEPENDENCY_STORAGE_DIR`** in the job environment or Prolog wrapper.
+- Force strict non-zero exits under Slurm (debug only): **`SLURM_HOOK_SOFT_FAIL=0`**.
+- Force soft-fail without `SLURM_JOB_ID` (e.g. tests): **`SLURM_HOOK_SOFT_FAIL=1`**.
+
+Regression check:
+
+```bash
+bash scripts/slurm_fakefs_hook_soft_fail_test.sh
+```
+
 ## 测试脚本
 
 ### 单机端到端（不依赖 /vol8 / Lustre）
@@ -159,10 +203,11 @@ make lint
 trans-tools/
 ├── cmd/
 │   ├── trans-tools/          # CLI（deps 子命令）
-│   └── agent/                # gRPC 接收端 agent
+│   ├── agent/                # gRPC 接收端 agent
+│   └── wrappersrun/          # srun wrapper binary
 ├── internal/                 # 私有实现（deps / distree / version 等）
 ├── pkg/                      # 可复用包（例如 nodeset 表达式解析）
-├── scripts/                  # e2e 脚本与辅助脚本
+├── scripts/                  # e2e and wrapper scripts
 ├── Makefile
 └── README.md
 ```

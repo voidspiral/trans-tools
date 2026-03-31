@@ -120,7 +120,6 @@ func sendToGroup(ctx context.Context, localFile string, meta fileMeta, group []n
 
 		replies, err := streamToNode(ctx, localFile, meta, addr, rest, opts)
 		if err != nil {
-			log.Printf("[distree client] connect to %s failed: %v", addr, err)
 			failReplies = append(failReplies, Reply{
 				OK:       false,
 				Nodelist: gateway.Host,
