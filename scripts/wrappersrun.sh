@@ -15,7 +15,7 @@ Workflow:
 Environment (optional):
   WRAPPERSRUN_ENABLE_DEPS=true|false
   WRAPPERSRUN_TRANS_TOOLS_BIN=trans-tools
-  WRAPPERSRUN_DEPS_NODES=<nodeset or host list>   # default: SLURM_NODELIST, fallback SLURM_JOB_NODELIST
+  WRAPPERSRUN_DEPS_NODES=<nodeset or host list>   # see Nodes note below
   WRAPPERSRUN_DEPS_PROGRAM=<program path>         # default: auto-detect from srun command
   WRAPPERSRUN_DEPS_DEST=/tmp/dependencies
   WRAPPERSRUN_DEPS_PORT=2007
@@ -25,6 +25,15 @@ Environment (optional):
   WRAPPERSRUN_DEPS_FILTER_PREFIX=/vol8
   WRAPPERSRUN_DEPS_AUTO_CLEAN=true|false
   WRAPPERSRUN_DEPS_INSECURE=true|false
+
+Nodes for deps (first non-empty wins):
+  1) WRAPPERSRUN_DEPS_NODES
+  2) SLURM_NODELIST or SLURM_JOB_NODELIST (e.g. after salloc or inside sbatch)
+  3) explicit srun -w / --nodelist in argv (only if you name hosts; -N/-n alone = no list)
+
+Random allocation (srun -N1 -n1 with no -w) has no host list before srun runs deps.
+  Use an allocation shell (salloc/sbatch), export WRAPPERSRUN_DEPS_NODES, set
+  WRAPPERSRUN_ENABLE_DEPS=false, or push dependency delivery to site prolog / another step.
 EOF
   exit 0
 fi
@@ -46,6 +55,50 @@ to_bool() {
 
 contains_equals() {
   [[ "$1" == *"="* ]]
+}
+
+# Slurm node list from argv: -w HOST, -wHOST, --nodelist HOST, --nodelist=HOST (before --).
+# Last occurrence wins. -N / --nodes is a count, not a hostname list (not parsed).
+extract_nodelist_from_srun() {
+  local args=("$@")
+  local i=0
+  local found=""
+  while (( i < ${#args[@]} )); do
+    local a="${args[$i]}"
+    if [[ "${a}" == "--" ]]; then
+      break
+    fi
+    if [[ "${a}" == --nodelist=* ]]; then
+      found="${a#--nodelist=}"
+      ((i++))
+      continue
+    fi
+    if [[ "${a}" == --nodelist ]]; then
+      ((i++))
+      (( i < ${#args[@]} )) || break
+      found="${args[$i]}"
+      ((i++))
+      continue
+    fi
+    if [[ "${a}" == -w ]]; then
+      ((i++))
+      (( i < ${#args[@]} )) || break
+      found="${args[$i]}"
+      ((i++))
+      continue
+    fi
+    if [[ "${a}" == -w* ]]; then
+      found="${a#-w}"
+      ((i++))
+      continue
+    fi
+    ((i++))
+  done
+  if [[ -n "${found}" ]]; then
+    echo "${found}"
+    return 0
+  fi
+  return 1
 }
 
 extract_program_from_srun() {
@@ -96,7 +149,15 @@ enable_deps="$(to_bool "${WRAPPERSRUN_ENABLE_DEPS:-true}" true)"
 
 trans_tools_bin="${WRAPPERSRUN_TRANS_TOOLS_BIN:-trans-tools}"
 
-deps_nodes="${WRAPPERSRUN_DEPS_NODES:-${SLURM_NODELIST:-${SLURM_JOB_NODELIST:-}}}"
+deps_nodes="${WRAPPERSRUN_DEPS_NODES:-}"
+if [[ -z "${deps_nodes}" ]]; then
+  deps_nodes="${SLURM_NODELIST:-${SLURM_JOB_NODELIST:-}}"
+fi
+if [[ -z "${deps_nodes}" ]]; then
+  if parsed="$(extract_nodelist_from_srun "$@")"; then
+    deps_nodes="${parsed}"
+  fi
+fi
 deps_program="${WRAPPERSRUN_DEPS_PROGRAM:-}"
 deps_dest="${WRAPPERSRUN_DEPS_DEST:-/tmp/dependencies}"
 deps_port="${WRAPPERSRUN_DEPS_PORT:-2007}"
@@ -109,7 +170,7 @@ deps_insecure="$(to_bool "${WRAPPERSRUN_DEPS_INSECURE:-false}" false)"
 
 if [[ "${enable_deps}" == "true" ]]; then
   if [[ -z "${deps_nodes}" ]]; then
-    echo "missing nodes for deps, set WRAPPERSRUN_DEPS_NODES or provide SLURM_NODELIST/SLURM_JOB_NODELIST" >&2
+    echo "missing nodes for deps: set WRAPPERSRUN_DEPS_NODES, use SLURM allocation env, or pass srun -w/--nodelist" >&2
     exit 1
   fi
   if [[ -z "${deps_program}" ]]; then
@@ -119,8 +180,9 @@ if [[ "${enable_deps}" == "true" ]]; then
     fi
   fi
   if [[ "${deps_program}" != /* ]]; then
+    unresolved_program="${deps_program}"
     if ! deps_program="$(command -v "${deps_program}")"; then
-      echo "resolve program failed: ${deps_program}" >&2
+      echo "resolve program failed: ${unresolved_program}" >&2
       exit 1
     fi
   fi

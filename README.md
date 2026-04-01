@@ -137,7 +137,7 @@ scripts/wrappersrun.sh -N 2 -n 64 /path/to/your_prog --arg1 x
 Fixed deps parameters can be configured by environment variables:
 
 ```bash
-export WRAPPERSRUN_DEPS_NODES='cn[1-32]'          # default: SLURM_NODELIST
+export WRAPPERSRUN_DEPS_NODES='cn[1-32]'          # or rely on SLURM_* env, or `srun -w` / `--nodelist` parsed from args
 export WRAPPERSRUN_DEPS_DEST='/tmp/dependencies'
 export WRAPPERSRUN_DEPS_FILTER_PREFIX='/vol8'
 export WRAPPERSRUN_DEPS_PORT='2007'
