@@ -28,8 +28,8 @@ Environment (optional):
 
 Nodes for deps (first non-empty wins):
   1) WRAPPERSRUN_DEPS_NODES
-  2) SLURM_NODELIST or SLURM_JOB_NODELIST (e.g. after salloc or inside sbatch)
-  3) explicit srun -w / --nodelist in argv (only if you name hosts; -N/-n alone = no list)
+  2) explicit srun -w / --nodelist in argv (only if you name hosts; -N/-n alone = no list)
+  3) SLURM_NODELIST or SLURM_JOB_NODELIST (e.g. after salloc or inside sbatch)
 
 Random allocation (srun -N1 -n1 with no -w) has no host list before srun runs deps.
   Use an allocation shell (salloc/sbatch), export WRAPPERSRUN_DEPS_NODES, set
@@ -55,6 +55,18 @@ to_bool() {
 
 contains_equals() {
   [[ "$1" == *"="* ]]
+}
+
+trim_wrapping_quotes() {
+  local s="${1:-}"
+  if [[ ${#s} -ge 2 ]]; then
+    if [[ "${s:0:1}" == "'" && "${s: -1}" == "'" ]]; then
+      s="${s:1:${#s}-2}"
+    elif [[ "${s:0:1}" == '"' && "${s: -1}" == '"' ]]; then
+      s="${s:1:${#s}-2}"
+    fi
+  fi
+  printf '%s' "${s}"
 }
 
 # Slurm node list from argv: -w HOST, -wHOST, --nodelist HOST, --nodelist=HOST (before --).
@@ -151,13 +163,14 @@ trans_tools_bin="${WRAPPERSRUN_TRANS_TOOLS_BIN:-trans-tools}"
 
 deps_nodes="${WRAPPERSRUN_DEPS_NODES:-}"
 if [[ -z "${deps_nodes}" ]]; then
-  deps_nodes="${SLURM_NODELIST:-${SLURM_JOB_NODELIST:-}}"
-fi
-if [[ -z "${deps_nodes}" ]]; then
   if parsed="$(extract_nodelist_from_srun "$@")"; then
     deps_nodes="${parsed}"
   fi
 fi
+if [[ -z "${deps_nodes}" ]]; then
+  deps_nodes="${SLURM_NODELIST:-${SLURM_JOB_NODELIST:-}}"
+fi
+deps_nodes="$(trim_wrapping_quotes "${deps_nodes}")"
 deps_program="${WRAPPERSRUN_DEPS_PROGRAM:-}"
 deps_dest="${WRAPPERSRUN_DEPS_DEST:-/tmp/dependencies}"
 deps_port="${WRAPPERSRUN_DEPS_PORT:-2007}"
@@ -197,8 +210,10 @@ if [[ "${enable_deps}" == "true" ]]; then
     --dest "${deps_dest}"
     --min-size-mb "${deps_min_size_mb}"
     --filter-prefix "${deps_filter_prefix}"
-    --auto-clean "${deps_auto_clean}"
   )
+  if [[ "${deps_auto_clean}" == "true" ]]; then
+    deps_cmd+=(--auto-clean)
+  fi
   if [[ "${deps_insecure}" == "true" ]]; then
     deps_cmd+=(--insecure)
   fi

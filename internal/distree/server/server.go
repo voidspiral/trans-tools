@@ -198,10 +198,12 @@ func (s *distTreeServer) initLocalWriter(req *pb.PutStreamReq) (*localWriter, er
 	return newLocalWriter(tmpDir, destDir, req.Name, req.Uid, req.Gid, req.Filemod, req.Modtime)
 }
 
-// initDownstreams 按 width 拆分下游节点，逐组建立连接。
-// 当某组的 gateway 连接失败时，只上报该节点失败，然后将剩余节点重组（下一个节点升级为
-// 新 gateway 并继承剩余子列表），继续尝试，直到找到可用 gateway 或本组耗尽。
-// 这样单个节点故障不会导致整条子链静默丢失。
+// initDownstreams splits downstream nodes by width and connects group by group.
+// If a group's gateway connection fails, only that node is reported as failed.
+// The remaining nodes are retried with the next node promoted as gateway while
+// preserving the remaining subtree list, until a usable gateway is found or the
+// group is exhausted. This prevents a single node failure from dropping the
+// entire downstream chain silently.
 func (s *distTreeServer) initDownstreams(ctx context.Context, req *pb.PutStreamReq) ([]*downstreamConn, []*pb.PutStreamReply) {
 	if req.Nodelist == "" || req.Width <= 0 {
 		return nil, nil
