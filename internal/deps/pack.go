@@ -43,8 +43,10 @@ func PackByDir(groups []DirGroup) (*TarPackResult, error) {
 		if len(g.Files) == 0 {
 			continue
 		}
-		// 将目录名中的所有 / 替换为 z（含开头），与 Python 实现保持一致：
-		// /vol8/test_libs -> zvol8ztest_libs，挂载脚本可通过 ${name//z//} 正确还原原始路径
+		// Replace all '/' in directory names with 'z' (including the leading slash)
+		// to match the Python implementation:
+		// /vol8/test_libs -> zvol8ztest_libs, so mount scripts can recover paths
+		// using ${name//z//}.
 		name := strings.ReplaceAll(g.Dir, string(filepath.Separator), "z")
 		if name == "" {
 			name = "root"

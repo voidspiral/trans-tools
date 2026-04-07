@@ -1,4 +1,4 @@
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Slurm prolog hook does not fail the allocation
 
@@ -45,15 +45,6 @@ When the cleanup script is executed with `SLURM_JOB_ID` set (Slurm epilog contex
 - **WHEN** the cleanup script runs as a Slurm epilog and any handled error occurs while `/tmp/dependency` exists
 - **THEN** the script SHALL NOT remove `/tmp/dependency` in that error path
 - **AND** the script SHALL preserve remaining files for operator troubleshooting
-
-### Requirement: Non-Slurm invocation may remain strict
-
-When `SLURM_JOB_ID` is unset, the mount script MAY exit non-zero for missing `fakefs`, strict aggregate failure, or invalid CLI, unless the operator sets an explicit environment flag documented in the script header to force soft-fail for testing.
-
-#### Scenario: Manual run without Slurm
-
-- **WHEN** an operator runs the mount script interactively without `SLURM_JOB_ID` and `fakefs` is missing
-- **THEN** the script MAY exit with non-zero status after printing or logging diagnostics
 
 ### Requirement: Hook log content
 

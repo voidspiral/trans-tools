@@ -5,11 +5,12 @@
 #   2. 从文件名恢复目录（如 zvol8zhomezuserzapp_so.tar -> /vol8/home/user/app）
 #   3. upperdir 解压 tar；lowerdir=业务目录；mountpoint=业务目录（同路径挂载）
 #
-# Slurm Prolog: when SLURM_JOB_ID is set (or SLURM_HOOK_SOFT_FAIL=1), the script exits 0
-# even on failures so the node is not drained; errors go to ${STORAGE_DIR}/hook-errors.log
-# and syslog (logger -t slurm-fakefs-hook). Set SLURM_HOOK_SOFT_FAIL=0 under Slurm to
-# keep strict non-zero exits. Without SLURM_JOB_ID, behavior stays fail-fast unless
-# SLURM_HOOK_SOFT_FAIL=1 (for tests).
+# Slurm Prolog: when SLURM_JOB_ID is set, handled failures exit 0 by default so the
+# node is not drained; errors go to ${STORAGE_DIR}/hook-errors.log and syslog
+# (logger -t slurm-fakefs-hook). Set SLURM_HOOK_SOFT_FAIL=0 to force strict non-zero
+# exits under Slurm (debug only; may cause Prolog errors / node drain). Without
+# SLURM_JOB_ID, behavior stays fail-fast unless SLURM_HOOK_SOFT_FAIL=1 (for tests).
+# Troubleshooting: error paths keep dependency storage content for postmortem analysis.
 
 set -euo pipefail
 

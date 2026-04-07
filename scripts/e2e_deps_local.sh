@@ -49,7 +49,7 @@ for node in cn1 cn2 cn3; do
     -tmp-name "${TMP_NAME}" \
     -port "${PORT}" \
     -dest-override "${DEST_DIR}" \
-    -insecure > /tmp/agent-${node}.log 2>&1 &
+    --insecure > /tmp/agent-${node}.log 2>&1 &
   PIDS+=("$!")
 done
 
