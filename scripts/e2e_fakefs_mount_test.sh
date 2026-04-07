@@ -89,6 +89,43 @@ cleanup_all() {
   rm -f "${TAR_PATH}" 2>/dev/null || true
 }
 
+verify_prolog_soft_fail_retains_storage() {
+  local probe_dir="/tmp/dependency-softfail-probe-$$"
+  local sentinel="${probe_dir}/retain-on-error.marker"
+  local hook_log="${probe_dir}/hook-errors.log"
+  rm -rf "${probe_dir}" 2>/dev/null || true
+  mkdir -p "${probe_dir}"
+  echo "retain-me" > "${sentinel}"
+
+  set +e
+  SLURM_JOB_ID="e2e-softfail-job" \
+  SLURMD_NODENAME="e2e-softfail-node" \
+  DEPENDENCY_STORAGE_DIR="${probe_dir}" \
+  FAKEFS_BIN="${probe_dir}/missing-fakefs" \
+  PATH="/usr/bin:/bin" \
+    bash "${ROOT_DIR}/scripts/dependency_mount_fakefs.sh" >/dev/null 2>&1
+  local rc=$?
+  set -e
+
+  if [[ "${rc}" -ne 0 ]]; then
+    echo "[ERROR] Expected soft-fail exit 0 for missing fakefs under Slurm context."
+    rm -rf "${probe_dir}" 2>/dev/null || true
+    exit 1
+  fi
+  if [[ ! -f "${sentinel}" ]]; then
+    echo "[ERROR] Expected dependency storage marker to be retained on error."
+    rm -rf "${probe_dir}" 2>/dev/null || true
+    exit 1
+  fi
+  if [[ ! -f "${hook_log}" ]] || ! grep -q "ERROR reason=MISSING_FAKEFS" "${hook_log}"; then
+    echo "[ERROR] Expected MISSING_FAKEFS entry in hook log: ${hook_log}"
+    rm -rf "${probe_dir}" 2>/dev/null || true
+    exit 1
+  fi
+  rm -rf "${probe_dir}" 2>/dev/null || true
+}
+
+verify_prolog_soft_fail_retains_storage
 require_root
 
 if [[ "${MODE}" == "3" ]]; then

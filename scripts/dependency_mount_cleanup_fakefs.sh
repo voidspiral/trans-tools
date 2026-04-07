@@ -15,9 +15,12 @@
 #   - 清理完成后会删除 STORAGE_DIR 本身（rm -rf）。
 #   - 如需保留依赖目录用于调试，加 --keep-storage。
 #
-# Slurm Epilog: same soft-fail rules as dependency_mount_fakefs.sh (SLURM_JOB_ID or
-# SLURM_HOOK_SOFT_FAIL=1). Errors go to ${STORAGE_DIR}/hook-errors.log and syslog.
-# SLURM_HOOK_SOFT_FAIL=0 forces strict non-zero exits under Slurm.
+# Slurm Epilog: same soft-fail rules as dependency_mount_fakefs.sh. Errors go to
+# ${STORAGE_DIR}/hook-errors.log and syslog. With SLURM_JOB_ID set, soft-fail is the
+# default (exit 0 on handled errors). SLURM_HOOK_SOFT_FAIL=0 forces strict non-zero
+# exits (debug only; may cause Epilog errors / node drain).
+# Troubleshooting rule: if any cleanup error occurs, do not delete STORAGE_DIR
+# (for example /tmp/dependency) so diagnostics remain available.
 
 set -u
 set -o pipefail
@@ -46,6 +49,15 @@ log_hook_error() {
   fi
 }
 
+HOOK_ERROR_SEEN=0
+
+record_hook_error() {
+  local reason="$1"
+  local msg="$2"
+  HOOK_ERROR_SEEN=1
+  log_hook_error "${reason}" "${msg}"
+}
+
 REMOVE_DIRS=0
 KEEP_STORAGE=0
 STORAGE_DIR_CLI=""
@@ -70,7 +82,7 @@ while [[ $# -gt 0 ]]; do
       else
         STORAGE_DIR="${STORAGE_DIR_CLI:-/tmp/dependencies}"
       fi
-      log_hook_error "BAD_CLI" "unknown option: $1"
+      record_hook_error "BAD_CLI" "unknown option: $1"
       if slurm_hook_soft_fail; then exit 0; fi
       exit 2
       ;;
@@ -82,7 +94,7 @@ while [[ $# -gt 0 ]]; do
         else
           STORAGE_DIR="${STORAGE_DIR_CLI}"
         fi
-        log_hook_error "BAD_CLI" "extra directory argument: $1"
+        record_hook_error "BAD_CLI" "extra directory argument: $1"
         if slurm_hook_soft_fail; then exit 0; fi
         exit 2
       fi
@@ -125,9 +137,9 @@ unmount_one() {
     if umount -l "${mp}" 2>/dev/null; then failed=0; fi
   fi
   if [[ "${failed}" -eq 1 ]]; then
-    log_hook_error "UNMOUNT" "failed to unmount ${mp}"
-    if ! slurm_hook_soft_fail; then return 1; fi
+    record_hook_error "UNMOUNT" "failed to unmount ${mp}"
   fi
+  # Always return 0 so set -e does not abort the epilog mid-loop; strict exit is decided at script end.
   return 0
 }
 
@@ -143,9 +155,14 @@ purge_storage_dir() {
     echo "[INFO] 保留依赖存放目录（--keep-storage）: ${STORAGE_DIR}"
     return 0
   fi
+  if [[ "${HOOK_ERROR_SEEN}" -eq 1 ]]; then
+    echo "[WARN] Skip deleting dependency storage because cleanup errors were recorded: ${STORAGE_DIR}"
+    return 0
+  fi
   if [[ -z "${STORAGE_DIR}" || "${STORAGE_DIR}" == "/" || "${STORAGE_DIR}" == "/tmp" ]]; then
     echo "[ERROR] 拒绝删除危险目录: ${STORAGE_DIR}"
-    return 1
+    record_hook_error "PURGE_STORAGE" "refused dangerous STORAGE_DIR=${STORAGE_DIR}"
+    return 0
   fi
   if [[ ! -e "${STORAGE_DIR}" ]]; then
     return 0
@@ -153,16 +170,17 @@ purge_storage_dir() {
   echo "[INFO] 删除依赖存放目录: ${STORAGE_DIR}"
   if ! rm -rf "${STORAGE_DIR}"; then
     echo "[ERROR] rm -rf failed: ${STORAGE_DIR}"
-    return 2
+    record_hook_error "PURGE_STORAGE" "rm -rf failed for ${STORAGE_DIR}"
+    return 0
   fi
+  return 0
 }
 
 if [[ ! -d "${BASE_DIR}" ]]; then
   echo "[INFO] 状态目录不存在: ${BASE_DIR}，跳过按 state 卸载"
   unmount_storage_dir_if_mounted
-  if ! purge_storage_dir; then
-    log_hook_error "PURGE_STORAGE" "purge_storage_dir failed (no base dir branch)"
-    if slurm_hook_soft_fail; then exit 0; fi
+  purge_storage_dir
+  if [[ "${HOOK_ERROR_SEEN}" -eq 1 ]] && ! slurm_hook_soft_fail; then
     exit 1
   fi
   echo "[INFO] 清理完成（fakefs 模式）"
@@ -188,26 +206,23 @@ done
 
 echo "[INFO] 清理 ${BASE_DIR} 下的 upper 内容与 state 文件"
 rm -rf "${BASE_DIR}"/*_upper/* 2>/dev/null || {
-  log_hook_error "RM_UPPER" "failed to clean upper dirs under ${BASE_DIR}"
-  if slurm_hook_soft_fail; then :; else exit 1; fi
+  record_hook_error "RM_UPPER" "failed to clean upper dirs under ${BASE_DIR}"
 }
 rm -f "${BASE_DIR}"/*.state 2>/dev/null || {
-  log_hook_error "RM_STATE" "failed to remove state files under ${BASE_DIR}"
-  if slurm_hook_soft_fail; then :; else exit 1; fi
+  record_hook_error "RM_STATE" "failed to remove state files under ${BASE_DIR}"
 }
 
 if [[ "${REMOVE_DIRS}" -eq 1 && -d "${BASE_DIR}" ]]; then
   echo "[INFO] 删除 ${BASE_DIR} 下的所有目录"
   rm -rf "${BASE_DIR:?}/"* 2>/dev/null || {
-    log_hook_error "RM_BASE" "failed remove-dirs under ${BASE_DIR}"
-    if slurm_hook_soft_fail; then :; else exit 1; fi
+    record_hook_error "RM_BASE" "failed remove-dirs under ${BASE_DIR}"
   }
 fi
 
 unmount_storage_dir_if_mounted
-if ! purge_storage_dir; then
-  log_hook_error "PURGE_STORAGE" "purge_storage_dir failed at final step"
-  if slurm_hook_soft_fail; then exit 0; fi
+purge_storage_dir
+
+if [[ "${HOOK_ERROR_SEEN}" -eq 1 ]] && ! slurm_hook_soft_fail; then
   exit 1
 fi
 

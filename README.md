@@ -158,16 +158,79 @@ Prolog=/shared/trans-tools/scripts/dependency_mount_fakefs.sh
 Epilog=/shared/trans-tools/scripts/dependency_mount_cleanup_fakefs.sh
 ```
 
-Behavior when **`SLURM_JOB_ID` is set** (normal Prolog/Epilog): scripts **exit 0** even if mounts, cleanup, or strict checks fail, so Slurm does not drain the node solely because of hook exit status. Failures are written to **`${DEPENDENCY_STORAGE_DIR:-/tmp/dependencies}/hook-errors.log`** (and to syslog via `logger -t slurm-fakefs-hook` when available).
+#### Behavior (Slurm vs non-Slurm)
 
-- Override dependency directory for Slurm jobs: set **`DEPENDENCY_STORAGE_DIR`** in the job environment or Prolog wrapper.
-- Force strict non-zero exits under Slurm (debug only): **`SLURM_HOOK_SOFT_FAIL=0`**.
-- Force soft-fail without `SLURM_JOB_ID` (e.g. tests): **`SLURM_HOOK_SOFT_FAIL=1`**.
+- When **`SLURM_JOB_ID` is set** (normal Prolog/Epilog): both scripts **default to exit 0** on handled failures (mount, cleanup, CLI misuse, strict aggregate, etc.) so Slurm does **not** drain the node because of hook exit status. For **debug only**, set **`SLURM_HOOK_SOFT_FAIL=0`** to force strict non-zero exits under Slurm (may surface as Prolog/Epilog errors or drain, depending on site policy).
+- **Without** `SLURM_JOB_ID`: scripts use strict non-zero exits where documented (e.g. missing `fakefs`, strict mount aggregate). For local tests you can set **`SLURM_HOOK_SOFT_FAIL=1`** to force soft-fail without Slurm.
+- **Epilog errors**: if any cleanup error is recorded, the epilog **does not delete** the dependency storage directory (`STORAGE_DIR`, often `/tmp/dependency` or `DEPENDENCY_STORAGE_DIR`) so you can inspect artifacts; success paths still remove storage when configured.
+- **Prolog errors**: dependency storage content is kept for diagnosis on failure paths (no destructive cleanup of the storage tree for troubleshooting).
+
+`STORAGE_DIR` resolution:
+
+- **Slurm**: `DEPENDENCY_STORAGE_DIR` if set, else **`/tmp/dependencies`** (unless you pass a directory as the script argument where supported).
+- **Non-Slurm**: optional CLI argument, else **`/tmp/dependencies`**.
+
+#### Where errors are logged
+
+1. **File (append)**: **`${STORAGE_DIR}/hook-errors.log`**  
+   Example (default Slurm layout): **`/tmp/dependencies/hook-errors.log`** if `DEPENDENCY_STORAGE_DIR` is unset.
+
+2. **Syslog tag**: **`slurm-fakefs-hook`** via `logger` when `logger(1)` is available.
+
+Each line is one record, for example:
+
+```text
+ERROR reason=MISSING_FAKEFS time=2026-04-07T12:00:00Z job=12345 node=cn001 msg=fakefs not found: fakefs
+```
+
+Fields include **`ERROR`**, **`reason=<code>`**, **`job=<SLURM_JOB_ID>`** (when set), **`node=<SLURMD_NODENAME or hostname>`**, and **`msg=...`**.
+
+#### How to inspect logs
+
+On a compute node (adjust paths to your `DEPENDENCY_STORAGE_DIR`):
+
+```bash
+# Tail the hook error file
+sudo tail -n 200 /tmp/dependencies/hook-errors.log
+
+# Filter by job
+grep "job=12345" /tmp/dependencies/hook-errors.log
+
+# Filter by reason code
+grep "reason=UNMOUNT" /tmp/dependencies/hook-errors.log
+```
+
+If the node uses **systemd journal**:
+
+```bash
+sudo journalctl -t slurm-fakefs-hook -n 200 --no-pager
+sudo journalctl -t slurm-fakefs-hook --since "1 hour ago" --no-pager
+```
+
+On traditional syslog files (path varies by distro):
+
+```bash
+sudo grep slurm-fakefs-hook /var/log/syslog
+# or
+sudo grep slurm-fakefs-hook /var/log/messages
+```
+
+Notes:
+
+- Override dependency directory for Slurm jobs: set **`DEPENDENCY_STORAGE_DIR`** in the job environment or Prolog wrapper (then read **`${DEPENDENCY_STORAGE_DIR}/hook-errors.log`**).
+- Errors are also printed to **stderr** of the hook process (useful when capturing Prolog/Epilog output in Slurm logs).
 
 Regression check:
 
 ```bash
 bash scripts/slurm_fakefs_hook_soft_fail_test.sh
+```
+
+Full hook validation (syntax + regression test + **shellcheck** when `shellcheck` is on `PATH`):
+
+```bash
+make validate-fakefs-hooks
+# or: bash scripts/validate_fakefs_hooks.sh
 ```
 
 ## 测试脚本
