@@ -69,6 +69,14 @@ trim_wrapping_quotes() {
   printf '%s' "${s}"
 }
 
+sanitize_nodes_expr() {
+  local s
+  s="$(trim_wrapping_quotes "${1:-}")"
+  s="${s//\'/}"
+  s="${s//\"/}"
+  printf '%s' "${s}"
+}
+
 # Slurm node list from argv: -w HOST, -wHOST, --nodelist HOST, --nodelist=HOST (before --).
 # Last occurrence wins. -N / --nodes is a count, not a hostname list (not parsed).
 extract_nodelist_from_srun() {
@@ -170,7 +178,7 @@ fi
 if [[ -z "${deps_nodes}" ]]; then
   deps_nodes="${SLURM_NODELIST:-${SLURM_JOB_NODELIST:-}}"
 fi
-deps_nodes="$(trim_wrapping_quotes "${deps_nodes}")"
+deps_nodes="$(sanitize_nodes_expr "${deps_nodes}")"
 deps_program="${WRAPPERSRUN_DEPS_PROGRAM:-}"
 deps_dest="${WRAPPERSRUN_DEPS_DEST:-/tmp/dependencies}"
 deps_port="${WRAPPERSRUN_DEPS_PORT:-2007}"
