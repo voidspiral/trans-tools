@@ -14,7 +14,7 @@ LDFLAGS = -ldflags "\
 	-X trans-tools/internal/version.GitCommit=$(GIT_COMMIT) \
 	-s -w"
 
-.PHONY: build build-agent build-all run clean test fmt lint vendor validate-fakefs-hooks help
+.PHONY: build build-agent build-all run clean test fmt lint vendor validate-fakefs-hooks validate-wrappersrun help
 
 build:
 	$(GOENV) $(GO) build $(GOMOD) $(LDFLAGS) -o bin/$(BINARY_NAME) ./cmd/trans-tools
@@ -42,6 +42,9 @@ lint:
 validate-fakefs-hooks:
 	bash scripts/validate_fakefs_hooks.sh
 
+validate-wrappersrun:
+	bash scripts/wrappersrun_test.sh
+
 vendor:
 	$(GOENV) $(GO) mod tidy
 	$(GOENV) $(GO) mod vendor
@@ -54,6 +57,7 @@ help:
 	@echo "  make run         - build and run client"
 	@echo "  make test        - run tests"
 	@echo "  make validate-fakefs-hooks - bash -n + hook regression test (+ shellcheck if installed)"
+	@echo "  make validate-wrappersrun - wrappersrun.sh argument parsing + integration tests"
 	@echo "  make fmt         - format code"
 	@echo "  make vendor      - generate vendor/ (requires network)"
 	@echo "  make clean       - remove bin/"
