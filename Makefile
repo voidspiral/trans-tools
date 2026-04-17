@@ -1,5 +1,5 @@
 BINARY_NAME ?= trans-tools
-VERSION ?= 0.1.0
+VERSION ?= 0.1.2
 BUILD_TIME := $(shell date -u '+%Y-%m-%d_%H:%M:%S')
 GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 
@@ -14,7 +14,7 @@ LDFLAGS = -ldflags "\
 	-X trans-tools/internal/version.GitCommit=$(GIT_COMMIT) \
 	-s -w"
 
-.PHONY: build build-agent build-all run clean test fmt lint vendor validate-fakefs-hooks validate-wrappersrun help
+.PHONY: build build-agent build-all run clean test fmt lint vendor validate-fakefs-hooks validate-wrappersrun validate-sbatch-wrappersrun-cases validate-sbatch-no-umount-diagnostic validate-sbatch-wrappersrun-guards validate-sbatch-wrappersrun-all help
 
 build:
 	$(GOENV) $(GO) build $(GOMOD) $(LDFLAGS) -o bin/$(BINARY_NAME) ./cmd/trans-tools
@@ -45,6 +45,17 @@ validate-fakefs-hooks:
 validate-wrappersrun:
 	bash scripts/wrappersrun_test.sh
 
+validate-sbatch-wrappersrun-cases:
+	bash scripts/run_sbatch_wrappersrun_cases.sh
+
+validate-sbatch-no-umount-diagnostic:
+	bash scripts/run_sbatch_no_umount_diagnostic.sh
+
+validate-sbatch-wrappersrun-guards:
+	bash scripts/regression_sbatch_wrappersrun_guards.sh
+
+validate-sbatch-wrappersrun-all: validate-sbatch-wrappersrun-guards validate-sbatch-wrappersrun-cases validate-sbatch-no-umount-diagnostic
+
 vendor:
 	$(GOENV) $(GO) mod tidy
 	$(GOENV) $(GO) mod vendor
@@ -58,6 +69,10 @@ help:
 	@echo "  make test        - run tests"
 	@echo "  make validate-fakefs-hooks - bash -n + hook regression test (+ shellcheck if installed)"
 	@echo "  make validate-wrappersrun - wrappersrun.sh argument parsing + integration tests"
+	@echo "  make validate-sbatch-wrappersrun-cases - submit sbatch wrappersrun case suite and validate markers"
+	@echo "  make validate-sbatch-no-umount-diagnostic - run Epilog-disabled fakefs visibility diagnostic and cleanup checks"
+	@echo "  make validate-sbatch-wrappersrun-guards - regression guards for wrappersrun/sbatch path and arg edge cases"
+	@echo "  make validate-sbatch-wrappersrun-all - run guards + standard sbatch suite + no-umount diagnostic"
 	@echo "  make fmt         - format code"
 	@echo "  make vendor      - generate vendor/ (requires network)"
 	@echo "  make clean       - remove bin/"

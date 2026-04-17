@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 set -euo pipefail
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
@@ -24,7 +24,10 @@ Environment (optional):
   WRAPPERSRUN_DEPS_MIN_SIZE_MB=10
   WRAPPERSRUN_DEPS_FILTER_PREFIX=/vol8
   WRAPPERSRUN_DEPS_AUTO_CLEAN=true|false
-  WRAPPERSRUN_DEPS_INSECURE=true|false
+  WRAPPERSRUN_DEPS_INSECURE=true|false         # default true
+  WRAPPERSRUN_FAKEFS_DIRECT_MODE=1|0           # default 1, exported as FAKEFS_DIRECT_MODE
+  WRAPPERSRUN_SRUN_MPI=<srun --mpi value>      # e.g. none when Open MPI lacks Slurm PMI
+  WRAPPERSRUN_LAUNCHER=srun|mpirun             # default srun; mpirun for MPI without Slurm PMI (Open MPI vs MPICH detected)
 
 Nodes for deps (first non-empty wins):
   1) WRAPPERSRUN_DEPS_NODES
@@ -187,7 +190,14 @@ deps_buffer="${WRAPPERSRUN_DEPS_BUFFER:-2M}"
 deps_min_size_mb="${WRAPPERSRUN_DEPS_MIN_SIZE_MB:-10}"
 deps_filter_prefix="${WRAPPERSRUN_DEPS_FILTER_PREFIX:-/vol8}"
 deps_auto_clean="$(to_bool "${WRAPPERSRUN_DEPS_AUTO_CLEAN:-true}" true)"
-deps_insecure="$(to_bool "${WRAPPERSRUN_DEPS_INSECURE:-false}" false)"
+deps_insecure="$(to_bool "${WRAPPERSRUN_DEPS_INSECURE:-true}" true)"
+wrappersrun_fakefs_direct_mode="${WRAPPERSRUN_FAKEFS_DIRECT_MODE:-1}"
+
+if [[ "${wrappersrun_fakefs_direct_mode}" != "0" && "${wrappersrun_fakefs_direct_mode}" != "1" ]]; then
+  echo "invalid WRAPPERSRUN_FAKEFS_DIRECT_MODE: ${wrappersrun_fakefs_direct_mode} (expected 0 or 1)" >&2
+  exit 2
+fi
+export FAKEFS_DIRECT_MODE="${wrappersrun_fakefs_direct_mode}"
 
 if [[ "${enable_deps}" == "true" ]]; then
   if [[ -z "${deps_nodes}" ]]; then
@@ -228,4 +238,73 @@ if [[ "${enable_deps}" == "true" ]]; then
   "${deps_cmd[@]}"
 fi
 
-exec srun "$@"
+wrappersrun_launcher="${WRAPPERSRUN_LAUNCHER:-srun}"
+if [[ "${wrappersrun_launcher}" == "mpirun" ]]; then
+  mpirun_is_mpich=0
+  if mpirun --version 2>/dev/null | grep -qi HYDRA; then
+    mpirun_is_mpich=1
+  fi
+  if [[ "${mpirun_is_mpich}" -eq 0 ]] && [[ "$(id -u)" -eq 0 ]]; then
+    export OMPI_ALLOW_RUN_AS_ROOT=1
+    export OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1
+  fi
+  mpirun_ntasks=1
+  mpirun_host=""
+  mpirun_forward=()
+  mpirun_i=0
+  mpirun_arr=("$@")
+  while (( mpirun_i < ${#mpirun_arr[@]} )); do
+    mpirun_a="${mpirun_arr[mpirun_i]}"
+    case "${mpirun_a}" in
+      -n|--ntasks)
+        ((++mpirun_i))
+        if (( mpirun_i >= ${#mpirun_arr[@]} )); then
+          echo "missing value for ${mpirun_a}" >&2
+          exit 2
+        fi
+        mpirun_ntasks="${mpirun_arr[mpirun_i]}"
+        ;;
+      -n[0-9]*)
+        mpirun_ntasks="${mpirun_a#-n}"
+        ;;
+      --ntasks=*)
+        mpirun_ntasks="${mpirun_a#*=}"
+        ;;
+      -w|--nodelist)
+        ((++mpirun_i))
+        if (( mpirun_i >= ${#mpirun_arr[@]} )); then
+          echo "missing value for ${mpirun_a}" >&2
+          exit 2
+        fi
+        mpirun_host="${mpirun_arr[mpirun_i]}"
+        ;;
+      --nodelist=*)
+        mpirun_host="${mpirun_a#*=}"
+        ;;
+      *)
+        mpirun_forward+=("${mpirun_a}")
+        ;;
+    esac
+    ((++mpirun_i))
+  done
+  mpirun_cmd=(mpirun)
+  if [[ "${mpirun_is_mpich}" -eq 0 ]]; then
+    mpirun_cmd+=(--oversubscribe)
+  fi
+  mpirun_cmd+=(-n "${mpirun_ntasks}")
+  if [[ -n "${mpirun_host}" ]]; then
+    if [[ "${mpirun_is_mpich}" -eq 1 ]]; then
+      mpirun_cmd+=(-hosts "${mpirun_host}:${mpirun_ntasks}")
+    else
+      mpirun_cmd+=(-host "${mpirun_host}:${mpirun_ntasks}")
+    fi
+  fi
+  mpirun_cmd+=("${mpirun_forward[@]}")
+  exec "${mpirun_cmd[@]}"
+fi
+
+srun_mpi=()
+if [[ -n "${WRAPPERSRUN_SRUN_MPI:-}" ]]; then
+  srun_mpi=(--mpi="${WRAPPERSRUN_SRUN_MPI}")
+fi
+exec srun "${srun_mpi[@]}" "$@"
