@@ -126,18 +126,20 @@ go build -o bin/agent ./cmd/agent
 ./bin/agent -port 2007 -tmp-name deps-cn1 -dest-override /local/dependencies
 ```
 
-### `wrappersrun` (script)
+### `wrappersrun`（脚本）
 
-Use `scripts/wrappersrun.sh` to keep the same `srun` usage while running fixed `trans-tools deps` first, then `srun`.
+`scripts/wrappersrun.sh` 用于保持原有 `srun` 调用习惯，同时在启动前固定执行 `trans-tools deps`，然后再进入 `srun`。
+
+示例：
 
 ```bash
 scripts/wrappersrun.sh -N 2 -n 64 /path/to/your_prog --arg1 x
 ```
 
-Fixed deps parameters can be configured by environment variables:
+常用环境变量（固定 deps 参数）：
 
 ```bash
-export WRAPPERSRUN_DEPS_NODES='cn[1-32]'          # or rely on SLURM_* env, or `srun -w` / `--nodelist` parsed from args
+export WRAPPERSRUN_DEPS_NODES='cn[1-32]'          # 也可依赖 SLURM_* 环境，或由 `srun -w/--nodelist` 解析
 export WRAPPERSRUN_DEPS_DEST='/tmp/dependencies'
 export WRAPPERSRUN_DEPS_FILTER_PREFIX='/vol8'
 export WRAPPERSRUN_DEPS_PORT='2007'
@@ -147,90 +149,119 @@ export WRAPPERSRUN_DEPS_MIN_SIZE_MB='10'
 scripts/wrappersrun.sh -N 2 -n 64 /path/to/your_prog
 ```
 
-### Slurm Prolog / Epilog (`dependency_mount_fakefs.sh`)
+当 `srun` 的 PMI 集成不可用时，可设置 `WRAPPERSRUN_LAUNCHER=mpirun`。wrapper 会自动处理 Open MPI 与 MPICH 的参数差异。
 
-Use `scripts/dependency_mount_fakefs.sh` as **Prolog** and `scripts/dependency_mount_cleanup_fakefs.sh` as **Epilog** so per-job dependencies are mounted and torn down on compute nodes.
+#### wrappersrun 验证入口
 
-Example `slurm.conf` snippets (paths must exist and be executable on compute nodes):
+```bash
+make validate-sbatch-wrappersrun-cases
+make validate-sbatch-wrappersrun-matrix
+make validate-sbatch-wrappersrun-full-coverage
+make validate-sbatch-no-umount-diagnostic
+make validate-sbatch-wrappersrun-guards
+make validate-sbatch-wrappersrun-all
+```
+
+#### 本地单机场景说明
+
+`scripts/sbatch_wrappersrun_test.sh`、`scripts/sbatch_wrappersrun_case_nodelist.sh`、`scripts/sbatch_wrappersrun_case_custom_deps.sh`、`scripts/run_sbatch_wrappersrun_cases.sh`、`scripts/run_sbatch_no_umount_diagnostic.sh` 等脚本，面向本地单节点验证环境（管理节点与登录节点同机）。
+
+生产 HPC 通常是多节点并且调度/登录/计算角色分离，因此这些脚本用于验证 wrappersrun/fakefs 的功能正确性与排障路径，不用于代表生产规模性能或跨节点网络行为。
+
+- `validate-sbatch-wrappersrun-full-coverage`：在矩阵用例基础上，增加 vol8 fixture 溯源验证、独立 fakefs staging 证据作业、`salloc --no-shell` split-flow（环境支持时）以及关键失败分支断言（`trans-tools deps` 失败、`srun` 退出码透传、缺失 `WRAPPERSRUN_TRANS_TOOLS_BIN`、`WRAPPERSRUN_SRUN_MPI` 注入）。
+- `validate-sbatch-wrappersrun-matrix`：运行高频 `srun` 参数组合（`-n/-N/-c`、`-p`、`--reservation`、`-t`、`-K`、`--nodelist=`、`-o`、`--chdir`），并校验：
+  - wrappersrun/deps 阶段标记
+  - epilog 前 `/vol8` fakefs 可见性（`df -h` + `findmnt`）
+  - epilog 后清理完成（运行期观察到的 `/vol8` fakefs 挂载点必须消失）
+- 分区/预约依赖环境能力；不支持时矩阵会输出带原因的 `CASE_RESULT=SKIP`。
+- `validate-sbatch-no-umount-diagnostic`：用于“Prolog 启用 + Epilog 关闭”的排障模式，强调可见性检查和手动清理校验。
+- `validate-sbatch-wrappersrun-guards`：快速回归检查（trans-tools 路径、`-n/--ntasks` 缺值处理、sbatch runner 的 `--chdir/--export` 安全性）。
+- `validate-sbatch-wrappersrun-all`：一键执行 guards + 标准 sbatch 用例 + no-umount 诊断链路。
+
+### Slurm Prolog / Epilog（`dependency_mount_fakefs.sh`）
+
+推荐将 `scripts/dependency_mount_fakefs.sh` 配置为 **Prolog**，`scripts/dependency_mount_cleanup_fakefs.sh` 配置为 **Epilog**，实现每作业依赖挂载与回收。
+
+`slurm.conf` 示例（路径需在计算节点可执行）：
 
 ```ini
 Prolog=/shared/trans-tools/scripts/dependency_mount_fakefs.sh
 Epilog=/shared/trans-tools/scripts/dependency_mount_cleanup_fakefs.sh
 ```
 
-#### Behavior (Slurm vs non-Slurm)
+#### 行为差异（Slurm / 非 Slurm）
 
-- When **`SLURM_JOB_ID` is set** (normal Prolog/Epilog): both scripts **default to exit 0** on handled failures (mount, cleanup, CLI misuse, strict aggregate, etc.) so Slurm does **not** drain the node because of hook exit status. For **debug only**, set **`SLURM_HOOK_SOFT_FAIL=0`** to force strict non-zero exits under Slurm (may surface as Prolog/Epilog errors or drain, depending on site policy).
-- **Without** `SLURM_JOB_ID`: scripts use strict non-zero exits where documented (e.g. missing `fakefs`, strict mount aggregate). For local tests you can set **`SLURM_HOOK_SOFT_FAIL=1`** to force soft-fail without Slurm.
-- **Epilog errors**: if any cleanup error is recorded, the epilog **does not delete** the dependency storage directory (`STORAGE_DIR`, often `/tmp/dependency` or `DEPENDENCY_STORAGE_DIR`) so you can inspect artifacts; success paths still remove storage when configured.
-- **Prolog errors**: dependency storage content is kept for diagnosis on failure paths (no destructive cleanup of the storage tree for troubleshooting).
+- **有 `SLURM_JOB_ID`（常规 Prolog/Epilog）**：脚本对已处理错误默认返回 `0`，避免仅因 Hook 退出码导致节点被 drain。仅调试时可设 `SLURM_HOOK_SOFT_FAIL=0` 强制严格非 0（可能触发 Prolog/Epilog 错误或节点隔离，取决于站点策略）。
+- **无 `SLURM_JOB_ID`**：脚本按文档进入严格失败语义；本地联调可设 `SLURM_HOOK_SOFT_FAIL=1` 启用 soft-fail。
+- **Epilog 失败**：若记录到清理错误，默认保留依赖目录（如 `STORAGE_DIR`/`DEPENDENCY_STORAGE_DIR`）便于排障。
+- **Prolog 失败**：保留依赖目录内容，避免排障证据被破坏。
+- **`--direct` 模式**：默认使用 fakefs `--direct`，更偏向下层直写语义；如需 COW 行为可设 `FAKEFS_DIRECT_MODE=0`。
 
-`STORAGE_DIR` resolution:
+`STORAGE_DIR` 解析规则：
 
-- **Slurm**: `DEPENDENCY_STORAGE_DIR` if set, else **`/tmp/dependencies`** (unless you pass a directory as the script argument where supported).
-- **Non-Slurm**: optional CLI argument, else **`/tmp/dependencies`**.
+- **Slurm**：优先 `DEPENDENCY_STORAGE_DIR`，否则 `/tmp/dependencies`（在脚本支持处也可传目录参数覆盖）
+- **非 Slurm**：优先脚本参数，否则 `/tmp/dependencies`
 
-#### Where errors are logged
+#### 错误日志位置
 
-1. **File (append)**: **`${STORAGE_DIR}/hook-errors.log`**  
-   Example (default Slurm layout): **`/tmp/dependencies/hook-errors.log`** if `DEPENDENCY_STORAGE_DIR` is unset.
+1. **文件追加写入**：`${STORAGE_DIR}/hook-errors.log`  
+   例如未设置 `DEPENDENCY_STORAGE_DIR` 时，默认在 `/tmp/dependencies/hook-errors.log`
+2. **syslog 标签**：`slurm-fakefs-hook`（依赖 `logger(1)`）
 
-2. **Syslog tag**: **`slurm-fakefs-hook`** via `logger` when `logger(1)` is available.
-
-Each line is one record, for example:
+单行记录示例：
 
 ```text
 ERROR reason=MISSING_FAKEFS time=2026-04-07T12:00:00Z job=12345 node=cn001 msg=fakefs not found: fakefs
 ```
 
-Fields include **`ERROR`**, **`reason=<code>`**, **`job=<SLURM_JOB_ID>`** (when set), **`node=<SLURMD_NODENAME or hostname>`**, and **`msg=...`**.
+包含字段：`ERROR`、`reason=<code>`、`job=<SLURM_JOB_ID>`（若有）、`node=<SLURMD_NODENAME|hostname>`、`msg=...`。
 
-#### How to inspect logs
+#### 日志查看方式
 
-On a compute node (adjust paths to your `DEPENDENCY_STORAGE_DIR`):
+计算节点（按你的 `DEPENDENCY_STORAGE_DIR` 调整路径）：
 
 ```bash
-# Tail the hook error file
+# 查看最近错误
 sudo tail -n 200 /tmp/dependencies/hook-errors.log
 
-# Filter by job
+# 按 job 过滤
 grep "job=12345" /tmp/dependencies/hook-errors.log
 
-# Filter by reason code
+# 按错误码过滤
 grep "reason=UNMOUNT" /tmp/dependencies/hook-errors.log
 ```
 
-If the node uses **systemd journal**:
+若节点使用 systemd journal：
 
 ```bash
 sudo journalctl -t slurm-fakefs-hook -n 200 --no-pager
 sudo journalctl -t slurm-fakefs-hook --since "1 hour ago" --no-pager
 ```
 
-On traditional syslog files (path varies by distro):
+传统 syslog（路径因发行版不同）：
 
 ```bash
 sudo grep slurm-fakefs-hook /var/log/syslog
-# or
+# 或
 sudo grep slurm-fakefs-hook /var/log/messages
 ```
 
-Notes:
+补充说明：
 
-- Override dependency directory for Slurm jobs: set **`DEPENDENCY_STORAGE_DIR`** in the job environment or Prolog wrapper (then read **`${DEPENDENCY_STORAGE_DIR}/hook-errors.log`**).
-- Errors are also printed to **stderr** of the hook process (useful when capturing Prolog/Epilog output in Slurm logs).
+- 如需改 Slurm 作业依赖目录，可在作业环境或 Prolog wrapper 中设置 `DEPENDENCY_STORAGE_DIR`，并到 `${DEPENDENCY_STORAGE_DIR}/hook-errors.log` 查看日志。
+- Hook 进程也会把错误输出到 `stderr`，便于在 Slurm 日志中联动定位。
 
-Regression check:
+回归测试：
 
 ```bash
 bash scripts/slurm_fakefs_hook_soft_fail_test.sh
 ```
 
-Full hook validation (syntax + regression test + **shellcheck** when `shellcheck` is on `PATH`):
+完整 Hook 验证（语法 + 回归，且若检测到 `shellcheck` 则附带 shellcheck）：
 
 ```bash
 make validate-fakefs-hooks
-# or: bash scripts/validate_fakefs_hooks.sh
+# 或：bash scripts/validate_fakefs_hooks.sh
 ```
 
 ## 测试脚本
@@ -270,7 +301,7 @@ trans-tools/
 │   └── wrappersrun/          # srun wrapper binary
 ├── internal/                 # 私有实现（deps / distree / version 等）
 ├── pkg/                      # 可复用包（例如 nodeset 表达式解析）
-├── scripts/                  # e2e and wrapper scripts
+├── scripts/                  # e2e 与 wrapper 脚本
 ├── Makefile
 └── README.md
 ```
