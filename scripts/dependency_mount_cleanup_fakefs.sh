@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # 基于 fakefs 的依赖挂载清理脚本
 #
 # 目标：
@@ -25,9 +25,14 @@
 set -u
 set -o pipefail
 
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
+
 slurm_hook_soft_fail() {
   [[ "${SLURM_HOOK_SOFT_FAIL:-}" == "0" ]] && return 1
-  [[ -n "${SLURM_JOB_ID:-}" ]] && return 0
+  [[ -n "${SLURM_JOB_ID:-${SLURM_JOBID:-}}" ]] && return 0
+  [[ -n "${SLURMD_NODENAME:-}" ]] && return 0
+  [[ -n "${SLURM_JOB_PARTITION:-}" ]] && return 0
+  [[ "$(id -un 2>/dev/null || echo unknown)" == "slurm" ]] && return 0
   [[ "${SLURM_HOOK_SOFT_FAIL:-}" == "1" ]] && return 0
   return 1
 }
@@ -37,13 +42,11 @@ log_hook_error() {
   local msg="$2"
   local ts line logf
   ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date '+%Y-%m-%dT%H:%M:%S')"
-  line="ERROR reason=${reason} time=${ts} job=${SLURM_JOB_ID:-} node=${SLURMD_NODENAME:-$(hostname 2>/dev/null || echo unknown)} msg=${msg}"
+  line="ERROR reason=${reason} time=${ts} job=${SLURM_JOB_ID:-${SLURM_JOBID:-}} node=${SLURMD_NODENAME:-$(hostname 2>/dev/null || echo unknown)} msg=${msg}"
   echo "${line}" >&2
-  logf="${STORAGE_DIR:-}/hook-errors.log"
-  if [[ -n "${STORAGE_DIR:-}" ]]; then
-    mkdir -p "${STORAGE_DIR}" 2>/dev/null || true
-    echo "${line}" >> "${logf}" 2>/dev/null || true
-  fi
+  logf="${STORAGE_DIR:-/tmp/dependencies}/hook-errors.log"
+  mkdir -p "$(dirname "${logf}")" 2>/dev/null || true
+  echo "${line}" >> "${logf}" 2>/dev/null || true
   if command -v logger >/dev/null 2>&1; then
     logger -t slurm-fakefs-hook -- "${line}" 2>/dev/null || true
   fi

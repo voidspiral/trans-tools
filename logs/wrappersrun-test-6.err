@@ -1,0 +1,2 @@
+ERROR: /var/spool/slurmd/job00006/../bin/mpi_hello not found or not executable
+Build it first: mpicc -o bin/mpi_hello scripts/mpi_hello.c

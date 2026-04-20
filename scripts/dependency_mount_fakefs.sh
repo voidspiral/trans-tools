@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # 依赖挂载脚本（基于 fakefs）
 # 逻辑：
 #   1. 依赖 *_so.tar 放在 STORAGE_DIR（默认 /tmp/dependencies）
@@ -14,9 +14,13 @@
 
 set -euo pipefail
 
-FAKEFS_BIN="${FAKEFS_BIN:-fakefs}"
+# Prolog/epilog and minimal-login environments may omit /usr/local/bin.
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
+
+FAKEFS_BIN="${FAKEFS_BIN:-/usr/local/bin/fakefs}"
 MOUNT_TIMEOUT_SEC="${FAKEFS_MOUNT_TIMEOUT_SEC:-15}"
 STRICT_MODE="${FAKEFS_STRICT_MODE:-1}"
+FAKEFS_DIRECT_MODE="${FAKEFS_DIRECT_MODE:-1}"
 AGENT_DEBUG_LOG_PATH="${AGENT_DEBUG_LOG_PATH:-}"
 
 usage() {
@@ -26,12 +30,17 @@ usage() {
   $0 -h|--help
 
 未指定 STORAGE_DIR：Slurm 用 DEPENDENCY_STORAGE_DIR，否则 /tmp/dependencies。
+环境变量：
+  FAKEFS_DIRECT_MODE=1|0   # 默认 1；1 时添加 --direct，主要影响写入行为（no COW）
 EOF
 }
 
 slurm_hook_soft_fail() {
   [[ "${SLURM_HOOK_SOFT_FAIL:-}" == "0" ]] && return 1
-  [[ -n "${SLURM_JOB_ID:-}" ]] && return 0
+  [[ -n "${SLURM_JOB_ID:-${SLURM_JOBID:-}}" ]] && return 0
+  [[ -n "${SLURMD_NODENAME:-}" ]] && return 0
+  [[ -n "${SLURM_JOB_PARTITION:-}" ]] && return 0
+  [[ "$(id -un 2>/dev/null || echo unknown)" == "slurm" ]] && return 0
   [[ "${SLURM_HOOK_SOFT_FAIL:-}" == "1" ]] && return 0
   return 1
 }
@@ -41,13 +50,11 @@ log_hook_error() {
   local msg="$2"
   local ts line logf
   ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date '+%Y-%m-%dT%H:%M:%S')"
-  line="ERROR reason=${reason} time=${ts} job=${SLURM_JOB_ID:-} node=${SLURMD_NODENAME:-$(hostname 2>/dev/null || echo unknown)} msg=${msg}"
+  line="ERROR reason=${reason} time=${ts} job=${SLURM_JOB_ID:-${SLURM_JOBID:-}} node=${SLURMD_NODENAME:-$(hostname 2>/dev/null || echo unknown)} msg=${msg}"
   echo "${line}" >&2
-  logf="${STORAGE_DIR:-}/hook-errors.log"
-  if [[ -n "${STORAGE_DIR:-}" ]]; then
-    mkdir -p "${STORAGE_DIR}" 2>/dev/null || true
-    echo "${line}" >> "${logf}" 2>/dev/null || true
-  fi
+  logf="${STORAGE_DIR:-/tmp/dependencies}/hook-errors.log"
+  mkdir -p "$(dirname "${logf}")" 2>/dev/null || true
+  echo "${line}" >> "${logf}" 2>/dev/null || true
   if command -v logger >/dev/null 2>&1; then
     logger -t slurm-fakefs-hook -- "${line}" 2>/dev/null || true
   fi
@@ -76,8 +83,12 @@ debug_log() {
   local location="$2"
   local message="$3"
   local data_json="${4:-{}}"
-  printf '{"id":"log_%s","timestamp":%s,"runId":"mount-script","hypothesisId":"%s","location":"%s","message":"%s","data":%s}\n' \
-    "$(date +%s%N)" "$(date +%s%3N)" "${hypothesis_id}" "${location}" "${message}" "${data_json}" >> "${DEBUG_LOG_PATH}"
+  local d
+  [[ -z "${DEBUG_LOG_PATH:-}" ]] && return 0
+  d="$(dirname "${DEBUG_LOG_PATH}")"
+  [[ -d "${d}" && -w "${d}" ]] || return 0
+  { printf '{"id":"log_%s","timestamp":%s,"runId":"mount-script","hypothesisId":"%s","location":"%s","message":"%s","data":%s}\n' \
+    "$(date +%s%N)" "$(date +%s%3N)" "${hypothesis_id}" "${location}" "${message}" "${data_json}" >> "${DEBUG_LOG_PATH}"; } 2>/dev/null || true
 }
 
 agent_debug_log() {
@@ -88,7 +99,7 @@ agent_debug_log() {
   local data_json="${4:-{}}"
   mkdir -p "$(dirname "${AGENT_DEBUG_LOG_PATH}")" 2>/dev/null || true
   printf '{"id":"log_%s","timestamp":%s,"runId":"prolog-env-debug","hypothesisId":"%s","location":"%s","message":"%s","data":%s}\n' \
-    "$(date +%s%N)" "$(date +%s%3N)" "${hypothesis_id}" "${location}" "${message}" "${data_json}" >> "${AGENT_DEBUG_LOG_PATH}"
+    "$(date +%s%N)" "$(date +%s%3N)" "${hypothesis_id}" "${location}" "${message}" "${data_json}" >> "${AGENT_DEBUG_LOG_PATH}" 2>/dev/null || true
 }
 
 unmount_one() {
@@ -151,14 +162,19 @@ if slurm_hook_soft_fail; then
   trap '_hook_err_trap' ERR
 fi
 
+if [[ "${FAKEFS_DIRECT_MODE}" != "0" && "${FAKEFS_DIRECT_MODE}" != "1" ]]; then
+  echo "[ERROR] FAKEFS_DIRECT_MODE must be 0 or 1, got: ${FAKEFS_DIRECT_MODE}" >&2
+  soft_fail_or_exit 1 "BAD_MODE" "invalid FAKEFS_DIRECT_MODE: ${FAKEFS_DIRECT_MODE}"
+fi
+
 if ! command -v "${FAKEFS_BIN}" >/dev/null 2>&1; then
   echo "[ERROR] 未找到 fakefs 可执行文件：${FAKEFS_BIN}"
   echo "       请确保已构建并将其加入 PATH，或通过 FAKEFS_BIN 覆盖路径。"
   soft_fail_or_exit 1 "MISSING_FAKEFS" "fakefs not found: ${FAKEFS_BIN}"
 fi
 
-DEBUG_LOG_PATH="${STORAGE_DIR}/debug.log"
 BASE_DIR="${FAKEFS_STATE_DIR:-${STORAGE_DIR}/.fakefs}"
+DEBUG_LOG_PATH=""
 
 echo "[INFO] 使用依赖存放目录: ${STORAGE_DIR}"
 
@@ -177,9 +193,11 @@ if (( ${#tar_files[@]} == 0 )); then
   exit 0
 fi
 
+mkdir -p "${BASE_DIR}"
+DEBUG_LOG_PATH="${BASE_DIR}/hook-debug.log"
+
 agent_debug_log "H1" "dependency_mount_fakefs.sh:entry" "prolog script entry env snapshot" "{\"uid\":\"$(id -u)\",\"user\":\"$(id -un 2>/dev/null || echo unknown)\",\"slurmJobId\":\"${SLURM_JOB_ID:-}\",\"slurmStepId\":\"${SLURM_STEP_ID:-}\",\"slurmNode\":\"${SLURMD_NODENAME:-}\",\"ldLibraryPath\":\"${LD_LIBRARY_PATH:-}\",\"storageDir\":\"${STORAGE_DIR}\"}"
 
-mkdir -p "${BASE_DIR}"
 overall_failed=0
 
 for tar_path in "${tar_files[@]}"; do
@@ -254,9 +272,14 @@ for tar_path in "${tar_files[@]}"; do
     done
   fi
 
-  echo "[INFO] fakefs: lowerdir=${lower_dir}, upperdir=${upper_dir}, mountpoint=${mountpoint}"
+  if [[ "${FAKEFS_DIRECT_MODE}" == "1" ]]; then
+    fakefs_cmd=( "${FAKEFS_BIN}" --direct -l "${lower_dir}" -u "${upper_dir}" "${mountpoint}" )
+  else
+    fakefs_cmd=( "${FAKEFS_BIN}" -l "${lower_dir}" -u "${upper_dir}" "${mountpoint}" )
+  fi
+  echo "[INFO] fakefs: lowerdir=${lower_dir}, upperdir=${upper_dir}, mountpoint=${mountpoint}, direct_mode=${FAKEFS_DIRECT_MODE}"
   if command -v timeout >/dev/null 2>&1; then
-    if timeout "${MOUNT_TIMEOUT_SEC}" "${FAKEFS_BIN}" -l "${lower_dir}" -u "${upper_dir}" "${mountpoint}"; then
+    if timeout "${MOUNT_TIMEOUT_SEC}" "${fakefs_cmd[@]}"; then
       :
     else
       rc=$?
@@ -265,7 +288,7 @@ for tar_path in "${tar_files[@]}"; do
       continue
     fi
   else
-    if "${FAKEFS_BIN}" -l "${lower_dir}" -u "${upper_dir}" "${mountpoint}"; then
+    if "${fakefs_cmd[@]}"; then
       :
     else
       rc=$?

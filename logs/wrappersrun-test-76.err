@@ -1,0 +1,2 @@
+ERROR: /tmp/bin/mpi_test not found or not executable
+Expected default: ${PROJECT_DIR}/bin/mpi_test (or set WRAPPERSRUN_MPI_BIN / WRAPPERSRUN_MPI_APP_DIR)

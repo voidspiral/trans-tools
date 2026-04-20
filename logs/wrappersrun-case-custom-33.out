@@ -1,0 +1,22 @@
+[CASE custom] [2026-04-11 00:42:32] STAGE=deps-precheck
+total 28
+drwxrwxrwx  2 root root  4096  4月 11 00:42 .
+drwxrwxrwt 14 root root 20480  4月 11 00:42 ..
+[CASE custom] [2026-04-11 00:42:32] STAGE=wrappersrun
+WARNING: insecure transport mode enabled (testing only)
+== Step 1: Analyze program dependencies ==
+== Step 2: Filter dependencies by prefixes: /vol8 ==
+== Step 3: Group and pack dependencies by directory ==
+== Step 4: Distribute tar files by tree ==
+  Send progress: 2/2
+  Send progress: 2/2
+  Send progress: 3/3
+== Step 5: Summary ==
+
+  /vol8/test_libs: 0 ok, 1 fail
+    FAIL DESKTOP-N3EHMFF
+  /vol8/test_libs_case2: 0 ok, 1 fail
+    FAIL DESKTOP-N3EHMFF
+  /vol8/test_libs_case3: 0 ok, 1 fail
+    FAIL DESKTOP-N3EHMFF
+

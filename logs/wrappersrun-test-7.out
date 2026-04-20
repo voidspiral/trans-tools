@@ -1,0 +1,18 @@
+[2026-04-10 17:16:10] Job started: SLURM_JOB_ID=7 SLURM_NODELIST=DESKTOP-N3EHMFF
+[2026-04-10 17:16:10] Running wrappersrun.sh with deps enabled
+WARNING: insecure transport mode enabled (testing only)
+== Step 1: Analyze program dependencies ==
+== Step 2: Filter dependencies by prefixes: /vol8 ==
+No dependencies matched prefixes. Fallback to all dependencies.
+== Step 3: Group and pack dependencies by directory ==
+== Step 4: Distribute tar files by tree ==
+  Send progress: 1/1
+  Send progress: 22/22
+== Step 5: Summary ==
+
+  /lib/x86_64-linux-gnu: 1 ok, 0 fail
+  /lib64: 1 ok, 0 fail
+
+Hello from rank 0 of 2
+Hello from rank 1 of 2
+[2026-04-10 17:16:11] Job finished successfully

@@ -1,0 +1,68 @@
+[CASE custom] [2026-04-16 17:12:45] STAGE=deps-precheck
+total 21548
+drwxrwxrwx  3 root root    4096  4月 16 17:12 .
+drwxrwxrwt 14 root root   20480  4月 16 17:12 ..
+drwxrwxrwx  5 root root    4096  4月 16 17:12 .fakefs
+-rwxrwxrwx  1 root root 7341568  4月 16 17:12 zvol8ztest_libs_case2_so.tar
+-rwxrwxrwx  1 root root 9438720  4月 16 17:12 zvol8ztest_libs_case3_so.tar
+-rwxrwxrwx  1 root root 5244416  4月 16 17:12 zvol8ztest_libs_so.tar
+[CASE custom] [2026-04-16 17:12:45] STAGE=mount-check
+Filesystem      Size  Used Avail Use% Mounted on
+none            3.9G     0  3.9G   0% /usr/lib/modules/6.6.87.2-microsoft-standard-WSL2
+none            3.9G  4.0K  3.9G   1% /mnt/wsl
+drivers         362G  305G   57G  85% /usr/lib/wsl/drivers
+/dev/sdd        251G   58G  181G  25% /
+none            3.9G  116K  3.9G   1% /mnt/wslg
+none            3.9G     0  3.9G   0% /usr/lib/wsl/lib
+rootfs          3.9G  2.7M  3.9G   1% /init
+none            3.9G  952K  3.9G   1% /run
+none            3.9G     0  3.9G   0% /run/lock
+none            3.9G     0  3.9G   0% /run/shm
+none            3.9G  516K  3.9G   1% /mnt/wslg/versions.txt
+none            3.9G  516K  3.9G   1% /mnt/wslg/doc
+C:\             362G  305G   57G  85% /mnt/c
+D:\             100G   12G   89G  12% /mnt/d
+snapfuse        128K  128K     0 100% /snap/bare/5
+snapfuse         74M   74M     0 100% /snap/core22/2339
+snapfuse         74M   74M     0 100% /snap/core22/2411
+snapfuse         92M   92M     0 100% /snap/gtk-common-themes/1535
+snapfuse         49M   49M     0 100% /snap/snapd/25935
+snapfuse         49M   49M     0 100% /snap/snapd/26382
+snapfuse        132M  132M     0 100% /snap/ubuntu-desktop-installer/1286
+snapfuse        151M  151M     0 100% /snap/ubuntu-desktop-installer/967
+tmpfs           787M   12K  787M   1% /run/user/0
+fakefs          251G   58G  181G  25% /vol8/test_libs_case2
+fakefs          251G   58G  181G  25% /vol8/test_libs_case3
+fakefs          251G   58G  181G  25% /vol8/test_libs
+TARGET                SOURCE FSTYPE      OPTIONS
+/vol8/test_libs_case2 fakefs fuse.fakefs rw,nosuid,nodev,relatime,user_id=0,group_id=0,default_permissions,allow_other
+/vol8/test_libs_case3 fakefs fuse.fakefs rw,nosuid,nodev,relatime,user_id=0,group_id=0,default_permissions,allow_other
+/vol8/test_libs       fakefs fuse.fakefs rw,nosuid,nodev,relatime,user_id=0,group_id=0,default_permissions,allow_other
+[CASE custom] [2026-04-16 17:12:45] STAGE=wrappersrun
+WARNING: insecure transport mode enabled (testing only)
+== Step 1: Analyze program dependencies ==
+== Step 2: Filter dependencies by prefixes: /vol8 ==
+== Step 3: Group and pack dependencies by directory ==
+== Step 4: Distribute tar files by tree ==
+  Send progress: 2/2
+  Send progress: 3/3
+  Send progress: 4/4
+== Step 5: Summary ==
+
+  /vol8/test_libs: 1 ok, 0 fail
+  /vol8/test_libs_case2: 1 ok, 0 fail
+  /vol8/test_libs_case3: 1 ok, 0 fail
+
+MPI Process 0 of 2: Starting...
+MPI Process 0: Calling dep1/dep2/dep3...
+dep1_ping(): from libdep1.so
+dep2_ping(): from libdep2.so
+dep3_ping(): from libdep3.so
+Process 0 received: 100 from process 1
+MPI Test completed successfully!
+MPI Process 1 of 2: Starting...
+MPI Process 1: Calling dep1/dep2/dep3...
+dep1_ping(): from libdep1.so
+dep2_ping(): from libdep2.so
+dep3_ping(): from libdep3.so
+[CASE custom] [2026-04-16 17:12:46] STAGE=mpi-finished

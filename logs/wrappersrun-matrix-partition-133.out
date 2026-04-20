@@ -1,0 +1,78 @@
+[INFO] 开始清理 fakefs 挂载
+[INFO] 卸载 fakefs 挂载点（按 state 文件）
+[INFO] fusermount3 -u /vol8/wr_run_fixture/lib
+[INFO] 清理 /tmp/dependencies/.fakefs 下的 upper 内容与 state 文件
+[INFO] 保留依赖存放目录（--keep-storage）: /tmp/dependencies
+[INFO] 清理完成（fakefs 模式）
+[CASE matrix-partition] [2026-04-20 09:38:03] STAGE=deps-precheck partition=debug
+total 32
+drwxr-xr-x  3 root root  4096  4月 20 09:38 .
+drwxrwxrwt 19 root root 20480  4月 20 09:38 ..
+drwxr-xr-x  3 root root  4096  4月 20 09:38 .fakefs
+[CASE matrix-partition] [2026-04-20 09:38:03] STAGE=mount-check
+Filesystem      Size  Used Avail Use% Mounted on
+none            3.9G     0  3.9G   0% /usr/lib/modules/6.6.87.2-microsoft-standard-WSL2
+none            3.9G  4.0K  3.9G   1% /mnt/wsl
+drivers         362G  301G   61G  84% /usr/lib/wsl/drivers
+/dev/sdd        251G   58G  181G  25% /
+none            3.9G  100K  3.9G   1% /mnt/wslg
+none            3.9G     0  3.9G   0% /usr/lib/wsl/lib
+rootfs          3.9G  2.7M  3.9G   1% /init
+none            3.9G  948K  3.9G   1% /run
+none            3.9G     0  3.9G   0% /run/lock
+none            3.9G     0  3.9G   0% /run/shm
+none            3.9G  516K  3.9G   1% /mnt/wslg/versions.txt
+none            3.9G  516K  3.9G   1% /mnt/wslg/doc
+C:\             362G  301G   61G  84% /mnt/c
+D:\             100G   12G   89G  12% /mnt/d
+snapfuse        128K  128K     0 100% /snap/bare/5
+snapfuse         74M   74M     0 100% /snap/core22/2339
+snapfuse         74M   74M     0 100% /snap/core22/2411
+snapfuse         92M   92M     0 100% /snap/gtk-common-themes/1535
+snapfuse         49M   49M     0 100% /snap/snapd/25935
+snapfuse         49M   49M     0 100% /snap/snapd/26382
+snapfuse        132M  132M     0 100% /snap/ubuntu-desktop-installer/1286
+snapfuse        151M  151M     0 100% /snap/ubuntu-desktop-installer/967
+tmpfs           787M   12K  787M   1% /run/user/0
+[CASE matrix-partition] [2026-04-20 09:38:03] STAGE=wrappersrun
+WARNING: insecure transport mode enabled (testing only)
+== Step 1: Analyze program dependencies ==
+== Step 2: Filter dependencies by prefixes: /vol8 ==
+== Step 3: Group and pack dependencies by directory ==
+== Step 4: Distribute tar files by tree ==
+  Send progress: 1/1
+== Step 5: Summary ==
+
+  /vol8/wr_run_fixture/lib: 1 ok, 0 fail
+
+[fixture-patch] patching tar=zvol8zwr_run_fixturezlib_so.tar
+STAGE=fixture-provenance
+WRAPPER_FIXTURE_MARKER=WR_FIXTURE_MARKER_VOL8_RAW
+STAGE=fixture-provenance
+WRAPPER_FIXTURE_MARKER=WR_FIXTURE_MARKER_VOL8_RAW
+[CASE matrix-partition] [2026-04-20 09:38:03] STAGE=pre-epilog-mount-check
+Filesystem      Size  Used Avail Use% Mounted on
+none            3.9G     0  3.9G   0% /usr/lib/modules/6.6.87.2-microsoft-standard-WSL2
+none            3.9G  4.0K  3.9G   1% /mnt/wsl
+drivers         362G  301G   61G  84% /usr/lib/wsl/drivers
+/dev/sdd        251G   58G  181G  25% /
+none            3.9G  100K  3.9G   1% /mnt/wslg
+none            3.9G     0  3.9G   0% /usr/lib/wsl/lib
+rootfs          3.9G  2.7M  3.9G   1% /init
+none            3.9G  948K  3.9G   1% /run
+none            3.9G     0  3.9G   0% /run/lock
+none            3.9G     0  3.9G   0% /run/shm
+none            3.9G  516K  3.9G   1% /mnt/wslg/versions.txt
+none            3.9G  516K  3.9G   1% /mnt/wslg/doc
+C:\             362G  301G   61G  84% /mnt/c
+D:\             100G   12G   89G  12% /mnt/d
+snapfuse        128K  128K     0 100% /snap/bare/5
+snapfuse         74M   74M     0 100% /snap/core22/2339
+snapfuse         74M   74M     0 100% /snap/core22/2411
+snapfuse         92M   92M     0 100% /snap/gtk-common-themes/1535
+snapfuse         49M   49M     0 100% /snap/snapd/25935
+snapfuse         49M   49M     0 100% /snap/snapd/26382
+snapfuse        132M  132M     0 100% /snap/ubuntu-desktop-installer/1286
+snapfuse        151M  151M     0 100% /snap/ubuntu-desktop-installer/967
+tmpfs           787M   12K  787M   1% /run/user/0
+[CASE matrix-partition] [2026-04-20 09:38:03] STAGE=mpi-finished

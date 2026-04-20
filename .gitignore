@@ -32,6 +32,6 @@ Thumbs.db
 *.local
 # Other dir
 myclush/
-newserver/
-syncFS/
 fakefs2/
+test_mpi_app/
+log/
