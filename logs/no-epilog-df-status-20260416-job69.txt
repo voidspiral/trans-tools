@@ -1,0 +1,15 @@
+Job: 69
+Mode: Prolog enabled, Epilog disabled (Epilog=(null))
+Source log: logs/no-umount-diagnostic-69.out
+
+[df -h excerpt during runtime]
+Filesystem      Size  Used Avail Use% Mounted on
+fakefs          251G   58G  181G  25% /vol8/test_libs_case2
+fakefs          251G   58G  181G  25% /vol8/test_libs_case3
+fakefs          251G   58G  181G  25% /vol8/test_libs
+
+[findmnt -t fuse.fakefs excerpt during runtime]
+TARGET                SOURCE FSTYPE      OPTIONS
+/vol8/test_libs_case2 fakefs fuse.fakefs rw,nosuid,nodev,relatime,user_id=0,group_id=0,default_permissions,allow_other
+/vol8/test_libs_case3 fakefs fuse.fakefs rw,nosuid,nodev,relatime,user_id=0,group_id=0,default_permissions,allow_other
+/vol8/test_libs       fakefs fuse.fakefs rw,nosuid,nodev,relatime,user_id=0,group_id=0,default_permissions,allow_other

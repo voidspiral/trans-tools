@@ -1,0 +1,32 @@
+[CASE nodelist] [2026-04-11 00:43:41] STAGE=deps-precheck
+total 28
+drwxrwxrwx  2 root root  4096  4月 11 00:43 .
+drwxrwxrwt 15 root root 20480  4月 11 00:43 ..
+[CASE nodelist] [2026-04-11 00:43:41] STAGE=wrappersrun
+WARNING: insecure transport mode enabled (testing only)
+== Step 1: Analyze program dependencies ==
+== Step 2: Filter dependencies by prefixes: /vol8 ==
+== Step 3: Group and pack dependencies by directory ==
+== Step 4: Distribute tar files by tree ==
+  Send progress: 3/3
+  Send progress: 4/4
+  Send progress: 5/5
+== Step 5: Summary ==
+
+  /vol8/test_libs: 1 ok, 0 fail
+  /vol8/test_libs_case2: 1 ok, 0 fail
+  /vol8/test_libs_case3: 1 ok, 0 fail
+
+MPI Process 0 of 2: Starting...
+MPI Process 0: Calling dep1/dep2/dep3...
+dep1_ping(): from libdep1.so
+dep2_ping(): from libdep2.so
+dep3_ping(): from libdep3.so
+Process 0 received: 100 from process 1
+MPI Test completed successfully!
+MPI Process 1 of 2: Starting...
+MPI Process 1: Calling dep1/dep2/dep3...
+dep1_ping(): from libdep1.so
+dep2_ping(): from libdep2.so
+dep3_ping(): from libdep3.so
+[CASE nodelist] [2026-04-11 00:43:41] STAGE=mpi-finished

@@ -1,0 +1,26 @@
+[CASE basic] [2026-04-11 00:39:11] Job started: SLURM_JOB_ID=27 SLURM_NODELIST=DESKTOP-N3EHMFF
+[CASE basic] [2026-04-11 00:39:11] STAGE=deps-precheck
+total 21560
+drwxrwxrwx  3 root  root     4096  4月 11 00:33 .
+drwxrwxrwt 14 root  root    20480  4月 11 00:39 ..
+-rwxrwxrwx  1 root  root     4401  4月 11 00:27 debug.log
+drwxrwxrwx  5 root  root     4096  4月 11 00:34 .fakefs
+-rwxrwxrwx  1 slurm slurm     141  4月 11 00:33 hook-errors.log
+-rwxrwxrwx  1 root  root  7341568  4月 10 23:47 zvol8ztest_libs_case2_so.tar
+-rwxrwxrwx  1 root  root  9438720  4月 10 23:47 zvol8ztest_libs_case3_so.tar
+-rwxrwxrwx  1 root  root  5244416  4月 10 23:47 zvol8ztest_libs_so.tar
+[CASE basic] [2026-04-11 00:39:11] STAGE=wrappersrun
+WARNING: insecure transport mode enabled (testing only)
+== Step 1: Analyze program dependencies ==
+== Step 2: Filter dependencies by prefixes: /vol8 ==
+== Step 3: Group and pack dependencies by directory ==
+== Step 4: Distribute tar files by tree ==
+  Send progress: 3/3
+  Send progress: 4/4
+  Send progress: 5/5
+== Step 5: Summary ==
+
+  /vol8/test_libs: 1 ok, 0 fail
+  /vol8/test_libs_case2: 1 ok, 0 fail
+  /vol8/test_libs_case3: 1 ok, 0 fail
+

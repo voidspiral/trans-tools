@@ -1,0 +1,3 @@
+agent: WARNING: insecure mode enabled (testing only)
+agent: starting on port 2007, tmpDir=/tmp/trans-tools-agent
+2026/04/20 09:34:21 [distree server] listening on :2007 (insecure=true)

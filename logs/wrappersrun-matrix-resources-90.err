@@ -1,0 +1,4 @@
+slurmstepd-DESKTOP-N3EHMFF: error: execve(): 1: No such file or directory
+slurmstepd-DESKTOP-N3EHMFF: error: execve(): 1: No such file or directory
+srun: error: DESKTOP-N3EHMFF: tasks 0-1: Exited with exit code 2
+srun: launch/slurm: _step_signal: Terminating StepId=90.0

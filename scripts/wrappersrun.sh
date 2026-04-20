@@ -28,6 +28,7 @@ Environment (optional):
   WRAPPERSRUN_FAKEFS_DIRECT_MODE=1|0           # default 1, exported as FAKEFS_DIRECT_MODE
   WRAPPERSRUN_SRUN_MPI=<srun --mpi value>      # e.g. none when Open MPI lacks Slurm PMI
   WRAPPERSRUN_LAUNCHER=srun|mpirun             # default srun; mpirun for MPI without Slurm PMI (Open MPI vs MPICH detected)
+  WRAPPERSRUN_POST_DEPS_HOOK=<shell command>  # optional; runs after successful deps (testing / site hooks)
 
 Nodes for deps (first non-empty wins):
   1) WRAPPERSRUN_DEPS_NODES
@@ -124,6 +125,25 @@ extract_nodelist_from_srun() {
   return 1
 }
 
+resolve_trans_tools_bin() {
+  local candidate="${1:-}"
+  local resolved=""
+  if [[ -z "${candidate}" ]]; then
+    printf '%s' "${candidate}"
+    return 0
+  fi
+  if [[ "${candidate}" == /* ]]; then
+    printf '%s' "${candidate}"
+    return 0
+  fi
+  resolved="$(command -v -- "${candidate}" 2>/dev/null || true)"
+  if [[ -n "${resolved}" ]]; then
+    printf '%s' "${resolved}"
+    return 0
+  fi
+  printf '%s' "${candidate}"
+}
+
 extract_program_from_srun() {
   local args=("$@")
   local i=0
@@ -145,7 +165,7 @@ extract_program_from_srun() {
         continue
       fi
       case "${a}" in
-        --account|--acctg-freq|--array|--bb|--bbf|--bcast|--clusters|--comment|--constraint|--container|--container-id|--cpus-per-gpu|--cpus-per-task|--deadline|--delay-boot|--distribution|--error|--exclude|--export|--extra-node-info|--gpus|--gpus-per-node|--gpus-per-socket|--gpus-per-task|--gres|--gres-flags|--hint|--input|--job-name|--kill-on-bad-exit|--licenses|--mail-type|--mail-user|--mem|--mem-bind|--mem-per-cpu|--mem-per-gpu|--network|--nice|--nodelist|--ntasks|--ntasks-per-core|--ntasks-per-gpu|--ntasks-per-node|--nodes|--open-mode|--output|--partition|--power|--priority|--profile|--qos|--reservation|--signal|--sockets-per-node|--switches|--task-epilog|--task-prolog|--thread-spec|--threads-per-core|--time|--tmp|--uid|--wait|--wckey)
+        --account|--acctg-freq|--array|--bb|--bbf|--bcast|--chdir|--clusters|--comment|--constraint|--container|--container-id|--cpus-per-gpu|--cpus-per-task|--deadline|--delay-boot|--distribution|--error|--exclude|--export|--extra-node-info|--gpus|--gpus-per-node|--gpus-per-socket|--gpus-per-task|--gres|--gres-flags|--hint|--input|--job-name|--kill-on-bad-exit|--licenses|--mail-type|--mail-user|--mem|--mem-bind|--mem-per-cpu|--mem-per-gpu|--network|--nice|--nodelist|--ntasks|--ntasks-per-core|--ntasks-per-gpu|--ntasks-per-node|--nodes|--open-mode|--output|--partition|--power|--priority|--profile|--qos|--reservation|--signal|--sockets-per-node|--switches|--task-epilog|--task-prolog|--thread-spec|--threads-per-core|--time|--tmp|--uid|--wait|--wckey)
           ((i+=2))
           continue
           ;;
@@ -171,6 +191,13 @@ extract_program_from_srun() {
 enable_deps="$(to_bool "${WRAPPERSRUN_ENABLE_DEPS:-true}" true)"
 
 trans_tools_bin="${WRAPPERSRUN_TRANS_TOOLS_BIN:-trans-tools}"
+if [[ "${enable_deps}" == "true" ]]; then
+  trans_tools_bin="$(resolve_trans_tools_bin "${trans_tools_bin}")"
+  if [[ -z "${trans_tools_bin}" || ! -x "${trans_tools_bin}" ]]; then
+    echo "WRAPPERSRUN_TRANS_TOOLS_BIN not found or not executable: ${WRAPPERSRUN_TRANS_TOOLS_BIN:-trans-tools}" >&2
+    exit 1
+  fi
+fi
 
 deps_nodes="${WRAPPERSRUN_DEPS_NODES:-}"
 if [[ -z "${deps_nodes}" ]]; then
@@ -236,6 +263,9 @@ if [[ "${enable_deps}" == "true" ]]; then
     deps_cmd+=(--insecure)
   fi
   "${deps_cmd[@]}"
+  if [[ -n "${WRAPPERSRUN_POST_DEPS_HOOK:-}" ]]; then
+    bash -c "${WRAPPERSRUN_POST_DEPS_HOOK}"
+  fi
 fi
 
 wrappersrun_launcher="${WRAPPERSRUN_LAUNCHER:-srun}"

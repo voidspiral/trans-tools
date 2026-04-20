@@ -176,10 +176,6 @@ func runDeps(args []string) {
 		os.Exit(2)
 	}
 
-	if insecure {
-		fmt.Println("WARNING: insecure transport mode enabled (testing only)")
-	}
-
 	fmt.Println("== Step 1: Analyze program dependencies ==")
 	allDeps, err := deps.AnalyzeDependencies(program, minSizeMB)
 	if err != nil {

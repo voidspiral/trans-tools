@@ -1,0 +1,5 @@
+[mpiexec@DESKTOP-N3EHMFF] match_arg (utils/args/args.c:163): unrecognized argument oversubscribe
+[mpiexec@DESKTOP-N3EHMFF] HYDU_parse_array (utils/args/args.c:178): argument matching returned error
+[mpiexec@DESKTOP-N3EHMFF] parse_args (ui/mpich/utils.c:1639): error parsing input array
+[mpiexec@DESKTOP-N3EHMFF] HYD_uii_mpx_get_parameters (ui/mpich/utils.c:1691): unable to parse user arguments
+[mpiexec@DESKTOP-N3EHMFF] main (ui/mpich/mpiexec.c:127): error parsing parameters

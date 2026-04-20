@@ -1,0 +1,36 @@
+[CASE custom] [2026-04-15 16:12:20] STAGE=deps-precheck
+total 21548
+drwxrwxrwx  3 root root    4096  4月 15 16:12 .
+drwxrwxrwt 12 root root   20480  4月 15 16:12 ..
+drwxrwxrwx  5 root root    4096  4月 15 16:12 .fakefs
+-rwxrwxrwx  1 root root 7341568  4月 15 16:12 zvol8ztest_libs_case2_so.tar
+-rwxrwxrwx  1 root root 9438720  4月 15 16:12 zvol8ztest_libs_case3_so.tar
+-rwxrwxrwx  1 root root 5244416  4月 15 16:12 zvol8ztest_libs_so.tar
+[CASE custom] [2026-04-15 16:12:20] STAGE=wrappersrun
+WARNING: insecure transport mode enabled (testing only)
+== Step 1: Analyze program dependencies ==
+== Step 2: Filter dependencies by prefixes: /vol8 ==
+== Step 3: Group and pack dependencies by directory ==
+== Step 4: Distribute tar files by tree ==
+  Send progress: 2/2
+  Send progress: 3/3
+  Send progress: 4/4
+== Step 5: Summary ==
+
+  /vol8/test_libs: 1 ok, 0 fail
+  /vol8/test_libs_case2: 1 ok, 0 fail
+  /vol8/test_libs_case3: 1 ok, 0 fail
+
+MPI Process 0 of 2: Starting...
+MPI Process 0: Calling dep1/dep2/dep3...
+dep1_ping(): from libdep1.so
+dep2_ping(): from libdep2.so
+dep3_ping(): from libdep3.so
+Process 0 received: 100 from process 1
+MPI Test completed successfully!
+MPI Process 1 of 2: Starting...
+MPI Process 1: Calling dep1/dep2/dep3...
+dep1_ping(): from libdep1.so
+dep2_ping(): from libdep2.so
+dep3_ping(): from libdep3.so
+[CASE custom] [2026-04-15 16:12:20] STAGE=mpi-finished

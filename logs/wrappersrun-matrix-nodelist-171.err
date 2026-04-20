@@ -1,0 +1,2 @@
+[INFO] Opened lowerdir='/vol8/wr_run_fixture/lib' fd=3, upperdir='/tmp/dependencies/.fakefs/vol8_wr_run_fixture_lib_upper' fd=4
+[INFO] Starting fakeFS: lowerdir=/vol8/wr_run_fixture/lib, upperdir=/tmp/dependencies/.fakefs/vol8_wr_run_fixture_lib_upper, mountpoint=/vol8/wr_run_fixture/lib

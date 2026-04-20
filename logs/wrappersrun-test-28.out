@@ -1,0 +1,20 @@
+[CASE basic] [2026-04-11 00:40:28] Job started: SLURM_JOB_ID=28 SLURM_NODELIST=DESKTOP-N3EHMFF
+[CASE basic] [2026-04-11 00:40:28] STAGE=deps-precheck
+total 28
+drwxrwxrwx  2 root root  4096  4月 11 00:40 .
+drwxrwxrwt 14 root root 20480  4月 11 00:40 ..
+[CASE basic] [2026-04-11 00:40:28] STAGE=wrappersrun
+WARNING: insecure transport mode enabled (testing only)
+== Step 1: Analyze program dependencies ==
+== Step 2: Filter dependencies by prefixes: /vol8 ==
+== Step 3: Group and pack dependencies by directory ==
+== Step 4: Distribute tar files by tree ==
+  Send progress: 3/3
+  Send progress: 4/4
+  Send progress: 5/5
+== Step 5: Summary ==
+
+  /vol8/test_libs: 1 ok, 0 fail
+  /vol8/test_libs_case2: 1 ok, 0 fail
+  /vol8/test_libs_case3: 1 ok, 0 fail
+
